@@ -12,6 +12,9 @@ export interface DetectorSpan {
   end_offset: number;
   text_content: string;
   decision: 'approve' | 'reject' | null;
+  ensemble_sources?: string[];
+  ensemble_agreement_count?: number;
+  ensemble_conflict_types?: string[];
 }
 
 export interface RiskFlag {
@@ -22,6 +25,9 @@ export interface RiskFlag {
   pii_category: 'phone' | 'ssn' | 'email' | 'name';
   pattern_source: string;
   decision: 'redact' | 'dismiss' | null;
+  ensemble_sources?: string[];
+  ensemble_agreement_count?: number;
+  ensemble_conflict_types?: string[];
 }
 
 export interface ReviewItems {
@@ -49,4 +55,7 @@ export interface ReviewableItem {
   decision: string | null;
   pii_category?: string;
   urgency: 'critical' | 'elevated' | 'standard';
+  ensemble_sources?: string[];
+  ensemble_agreement_count?: number;
+  ensemble_conflict_types?: string[];
 }
