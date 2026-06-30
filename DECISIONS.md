@@ -260,3 +260,25 @@ Architectural and UX decisions made during the 8-hour hackathon build.
 **Tradeoffs:** Button appearance shifts layout slightly, but the change is minor.
 
 ---
+
+## 19. Uploaded Document PII Detection: Option D Confidence-Tier Split
+
+**Decision:** For uploaded documents (PDF/.docx), PII detection results are split across two tiers based on pattern confidence rather than a separate "flawed detector vs. ground truth" model:
+
+- **High-confidence structured patterns** (SSN regex, email regex, phone regex) → `DetectorSpan` rows → appear as "Proposed Redactions" in the sidebar
+- **Lower-confidence heuristics** (capitalized name pairs matching a known-first-names list) → `RiskFlag` rows → appear as "Potential Risk - Review Carefully"
+
+No ground truth is stored for uploaded documents. `compute_summary` handles this gracefully: GT-dependent metrics (exposures caught/missed, unnecessary redactions fixed, correct redactions kept) return zero for uploaded documents. `total_reviewed` is always accurate and the complete review flow works end-to-end.
+
+**Alternatives considered:**
+
+- **Option A — Everything → `detector_spans`:** Flattens all urgency tiers. A missed SSN and a possibly-wrong name get the same visual treatment. The "High Risk / Potential Risk" sections disappear for uploaded documents. Unacceptable UX regression.
+- **Option B — Random partition:** Creates a fake structural distinction with no semantic meaning. Misleading to the reviewer.
+- **Option C — Everything → `risk_flags`:** "Proposed Redactions" section renders empty, looks broken. The approve/reject workflow is bypassed entirely.
+- **Option D (chosen) — Split by confidence tier:** Maps directly onto the semantic meaning of the two tiers from the reviewer's perspective: "machine-confident proposed redactions" vs. "things you should double-check."
+
+**Why this choice:** The two tiers in the demo document aren't really "detector vs. risk scorer" from the reviewer's perspective — they're "machine-confident proposed redactions" versus "things you should double-check." Option D maps directly onto that meaning. High-confidence structured patterns have near-zero false positive rates (SSN format is unambiguous, email is structurally identifiable, phone regex is reliable). Name heuristics are prone to false positives — organization names, place names, and honorifics all match the capitalized-word-pair pattern. Splitting on this axis preserves the urgency model and keeps the review UX consistent between demo and uploaded documents.
+
+**On the absence of false-negative simulation for uploads:** For the demo document, a phone number the detector *missed* appears in `risk_flags` as a dangerous catch — because there's a hand-crafted ground truth to miss against. For an uploaded document, a phone number the regex finds goes into `detector_spans` directly. There's no false-negative drama, no "dangerous miss" framing — because there's no hand-crafted ground truth to miss against. The review experience is still complete and correct; it just doesn't have the deliberate pedagogical tension the demo document was designed to create. That's honest, not a gap. Uploaded documents are real, not demo scaffolding.
+
+**Tradeoffs:** The completion summary's GT-dependent metrics (exposures caught/missed) are meaningless for uploaded documents and display as zero. This is disclosed by design — the summary still shows `total_reviewed` accurately, and the core review workflow is fully functional.

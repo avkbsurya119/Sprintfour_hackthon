@@ -18,9 +18,9 @@ Traditional review UIs treat these errors the same way, so Sam skims past both. 
 ```bash
 cd backend
 python -m venv venv
-source venv/Scripts/activate  # Windows: venv\Scripts\activate
+venv\Scripts\activate          # Windows CMD
 pip install -r requirements.txt
-python -m app.seed  # Create sample document
+python -m app.seed             # Create sample document
 uvicorn app.main:app --reload
 ```
 
@@ -32,6 +32,24 @@ npm run dev
 ```
 
 **3. Open http://localhost:5173**
+
+## Reset to Clean State
+
+The backend database (`conseal_review.db`) persists between restarts. To get a fresh state:
+
+**Backend (reseed database):**
+```bash
+cd backend
+python -m app.seed
+```
+
+**Frontend (clear Vite cache):**
+```bash
+cd frontend
+rmdir /s /q node_modules\.vite   # Windows CMD
+# or: rm -rf node_modules/.vite  # Git Bash
+npm run dev
+```
 
 ## Architecture
 
