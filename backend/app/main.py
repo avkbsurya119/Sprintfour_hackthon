@@ -4,7 +4,10 @@ from sqlalchemy.orm import Session
 from typing import List
 
 from app.database import get_db, engine
-from app.models import Base, Document, DetectorSpan, RiskFlag, UserDecision, GroundTruthSpan
+from app.models import (
+    Base, Document, DetectorSpan, RiskFlag, UserDecision,
+    GroundTruthSpan, PseudonymMapping, SanitizedOutput
+)
 from app.schemas import (
     DocumentResponse,
     ReviewItemsResponse,
@@ -15,10 +18,20 @@ from app.schemas import (
     SummaryResponse,
     UploadResponse,
     DocumentListItem,
+    SanitizeRequest,
+    SanitizeResponse,
+    RedactionInfo,
+    PseudonymMappingResponse,
+    SanitizedOutputResponse,
+    ManualSpanCreate,
+    ManualSpanResponse,
+    SpanUpdateRequest,
+    SpanDeleteResponse,
 )
 from app.extractor import extract_text, ExtractionError
 from app.risk_scorer import find_potential_pii, PHONE_PATTERN, SSN_PATTERN, EMAIL_PATTERN, NAME_PATTERN, POSTAL_PATTERN
-from app.ensemble import run_ensemble, apply_ensemble_metadata
+from app.ensemble import run_ensemble, apply_ensemble_metadata, persist_ensemble_results
+from app.sanitizer import sanitize_document, DocumentSanitizer
 
 # DEMO_DOCUMENT_ID is the seeded demo document — never deleted, never re-scanned.
 # Uploaded documents get IDs > 1 and are processed via Option D confidence-tier split.
@@ -72,11 +85,21 @@ async def upload_document(
     """
     Upload a PDF or .docx document for PII review.
 
-    Uses Option D confidence-tier split for detector spans vs risk flags:
-    - High-confidence patterns (SSN, email, phone regex) → DetectorSpan rows
-      (shown as "Proposed Redactions" — machine is confident)
-    - Lower-confidence heuristics (name pattern) → RiskFlag rows
-      (shown as "Potential Risk" — needs human judgment)
+    Uses ensemble detection with all available detectors:
+    - Regex patterns (SSN, email, phone, postal code, names)
+    - Presidio Analyzer (ML-based NER)
+    - spaCy NER (PERSON, ORG, GPE, etc.)
+    - Rule-based patterns (URLs, usernames, ID numbers)
+
+    All detectors run independently and results are reconciled:
+    - High-confidence findings → DetectorSpan (proposed redactions)
+    - Lower-confidence findings → RiskFlag (needs human review)
+
+    Every detection includes:
+    - Which detector(s) found it
+    - Agreement count (1-4)
+    - Confidence score (0-100)
+    - Type conflicts if detectors disagree
 
     No ground truth is stored for uploaded documents — compute_summary
     handles this gracefully by returning zeros for GT-dependent metrics.
@@ -103,63 +126,15 @@ async def upload_document(
     db.add(doc)
     db.flush()  # get doc.id
 
-    # --- Option D: scan full text, split by confidence tier ---
-    # Pass empty redacted_ranges — for uploaded docs, nothing is pre-redacted.
-    # HIGH-CONFIDENCE patterns → DetectorSpan
-    detector_spans_added = []
-    detector_ranges = []
-
-    for pattern, category in [
-        (SSN_PATTERN, 'ssn'),
-        (EMAIL_PATTERN, 'email'),
-        (PHONE_PATTERN, 'phone'),
-        (POSTAL_PATTERN, 'postal_code'),
-    ]:
-        for match in pattern.finditer(text):
-            # Avoid overlapping spans (e.g. SSN pattern subset of phone pattern)
-            start, end = match.start(), match.end()
-            overlaps = any(
-                not (end <= rs or start >= re)
-                for rs, re in detector_ranges
-            )
-            if overlaps:
-                continue
-            span = DetectorSpan(
-                document_id=doc.id,
-                start_offset=start,
-                end_offset=end,
-                text_content=match.group()
-            )
-            db.add(span)
-            detector_spans_added.append(span)
-            detector_ranges.append((start, end))
-
-    # LOWER-CONFIDENCE heuristic → RiskFlag (elevated urgency)
-    risk_flags_added = []
-    for match in NAME_PATTERN.finditer(text):
-        start, end = match.start(), match.end()
-        # Skip if already covered by a high-confidence detector span
-        overlaps = any(
-            not (end <= rs or start >= re)
-            for rs, re in detector_ranges
-        )
-        if overlaps:
-            continue
-        flag = RiskFlag(
-            document_id=doc.id,
-            start_offset=start,
-            end_offset=end,
-            text_content=match.group(),
-            pii_category='name',
-            pattern_source='name_heuristic'
-        )
-        db.add(flag)
-        risk_flags_added.append(flag)
-
-    # ENSEMBLE PASS
-    reconciled_spans = run_ensemble(text)
-    apply_ensemble_metadata(detector_spans_added, reconciled_spans)
-    apply_ensemble_metadata(risk_flags_added, reconciled_spans)
+    # --- Run full ensemble detection and persist ALL results ---
+    # This runs all 4 detectors (regex, presidio, spacy, rules),
+    # reconciles overlapping findings, and creates database rows
+    # for EVERY detection - not just regex matches.
+    detector_spans_added, risk_flags_added = persist_ensemble_results(
+        text=text,
+        document_id=doc.id,
+        db=db
+    )
 
     db.commit()
 
@@ -222,7 +197,13 @@ def get_review_items(document_id: int, db: Session = Depends(get_db)):
             start_offset=span.start_offset,
             end_offset=span.end_offset,
             text_content=span.text_content,
-            decision=decision_map.get(("detector", span.id))
+            pii_category=span.pii_category,
+            confidence_score=span.confidence_score,
+            is_manual=bool(span.is_manual) if span.is_manual is not None else False,
+            decision=decision_map.get(("detector", span.id)),
+            ensemble_sources=span.ensemble_sources,
+            ensemble_agreement_count=span.ensemble_agreement_count,
+            ensemble_conflict_types=span.ensemble_conflict_types
         ))
 
     risk_responses = []
@@ -234,7 +215,12 @@ def get_review_items(document_id: int, db: Session = Depends(get_db)):
             text_content=flag.text_content,
             pii_category=flag.pii_category,
             pattern_source=flag.pattern_source,
-            decision=decision_map.get(("risk_flag", flag.id))
+            confidence_score=flag.confidence_score,
+            is_manual=bool(flag.is_manual) if flag.is_manual is not None else False,
+            decision=decision_map.get(("risk_flag", flag.id)),
+            ensemble_sources=flag.ensemble_sources,
+            ensemble_agreement_count=flag.ensemble_agreement_count,
+            ensemble_conflict_types=flag.ensemble_conflict_types
         ))
 
     return ReviewItemsResponse(
@@ -337,6 +323,187 @@ def delete_decision(
     db.delete(decision)
     db.commit()
     return {"status": "deleted", "id": decision_id}
+
+
+# ============================================================================
+# Manual Span Management Endpoints
+# ============================================================================
+
+@app.post("/api/documents/{document_id}/spans")
+def create_manual_span(
+    document_id: int,
+    request: ManualSpanCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a manual PII detection.
+
+    Allows users to mark text as PII that was missed by automatic detection.
+    """
+    # Get document
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Validate offsets
+    if request.start_offset < 0 or request.end_offset > len(doc.content):
+        raise HTTPException(status_code=400, detail="Invalid offsets")
+    if request.start_offset >= request.end_offset:
+        raise HTTPException(status_code=400, detail="start_offset must be less than end_offset")
+
+    # Extract text content
+    text_content = doc.content[request.start_offset:request.end_offset]
+
+    # Check for overlapping spans
+    existing_detector = db.query(DetectorSpan).filter(
+        DetectorSpan.document_id == document_id,
+        DetectorSpan.start_offset < request.end_offset,
+        DetectorSpan.end_offset > request.start_offset
+    ).first()
+
+    existing_risk = db.query(RiskFlag).filter(
+        RiskFlag.document_id == document_id,
+        RiskFlag.start_offset < request.end_offset,
+        RiskFlag.end_offset > request.start_offset
+    ).first()
+
+    if existing_detector or existing_risk:
+        raise HTTPException(
+            status_code=400,
+            detail="Overlaps with existing detection. Edit or remove the existing one first."
+        )
+
+    # Create the span
+    if request.span_type == 'risk_flag':
+        span = RiskFlag(
+            document_id=document_id,
+            start_offset=request.start_offset,
+            end_offset=request.end_offset,
+            text_content=text_content,
+            pii_category=request.pii_category,
+            pattern_source='manual',
+            confidence_score=100,
+            is_manual=1,
+            ensemble_sources=['manual'],
+            ensemble_agreement_count=1
+        )
+    else:
+        span = DetectorSpan(
+            document_id=document_id,
+            start_offset=request.start_offset,
+            end_offset=request.end_offset,
+            text_content=text_content,
+            pii_category=request.pii_category,
+            confidence_score=100,
+            is_manual=1,
+            ensemble_sources=['manual'],
+            ensemble_agreement_count=1
+        )
+
+    db.add(span)
+    db.commit()
+    db.refresh(span)
+
+    return ManualSpanResponse(
+        id=span.id,
+        span_type=request.span_type if request.span_type == 'risk_flag' else 'detector',
+        start_offset=span.start_offset,
+        end_offset=span.end_offset,
+        text_content=span.text_content,
+        pii_category=request.pii_category,
+        is_manual=True
+    )
+
+
+@app.patch("/api/documents/{document_id}/spans/{span_type}/{span_id}")
+def update_span_category(
+    document_id: int,
+    span_type: str,
+    span_id: int,
+    request: SpanUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """Update the PII category of an existing span."""
+    if span_type not in ['detector', 'risk_flag']:
+        raise HTTPException(status_code=400, detail="Invalid span_type")
+
+    # Find the span
+    if span_type == 'detector':
+        span = db.query(DetectorSpan).filter(
+            DetectorSpan.id == span_id,
+            DetectorSpan.document_id == document_id
+        ).first()
+    else:
+        span = db.query(RiskFlag).filter(
+            RiskFlag.id == span_id,
+            RiskFlag.document_id == document_id
+        ).first()
+
+    if not span:
+        raise HTTPException(status_code=404, detail="Span not found")
+
+    # Update the category
+    span.pii_category = request.pii_category
+    db.commit()
+
+    return {
+        "success": True,
+        "span_type": span_type,
+        "span_id": span_id,
+        "pii_category": request.pii_category
+    }
+
+
+@app.delete("/api/documents/{document_id}/spans/{span_type}/{span_id}")
+def delete_span(
+    document_id: int,
+    span_type: str,
+    span_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Delete a span (detection).
+
+    Only allows deletion of manual spans or spans that haven't been decided on.
+    """
+    if span_type not in ['detector', 'risk_flag']:
+        raise HTTPException(status_code=400, detail="Invalid span_type")
+
+    # Find the span
+    if span_type == 'detector':
+        span = db.query(DetectorSpan).filter(
+            DetectorSpan.id == span_id,
+            DetectorSpan.document_id == document_id
+        ).first()
+    else:
+        span = db.query(RiskFlag).filter(
+            RiskFlag.id == span_id,
+            RiskFlag.document_id == document_id
+        ).first()
+
+    if not span:
+        raise HTTPException(status_code=404, detail="Span not found")
+
+    # Check for existing decision
+    existing_decision = db.query(UserDecision).filter(
+        UserDecision.document_id == document_id,
+        UserDecision.span_type == span_type,
+        UserDecision.span_id == span_id
+    ).first()
+
+    if existing_decision:
+        # Delete the decision first
+        db.delete(existing_decision)
+
+    # Delete the span
+    db.delete(span)
+    db.commit()
+
+    return SpanDeleteResponse(
+        success=True,
+        span_type=span_type,
+        span_id=span_id
+    )
 
 
 @app.post("/api/documents/{document_id}/complete", response_model=SummaryResponse)
@@ -463,3 +630,187 @@ def compute_summary(document_id: int, db: Session) -> SummaryResponse:
         total_reviewed=len(decisions),
         document_status=doc.status if doc else "unknown"
     )
+
+
+# ============================================================================
+# Sanitization Endpoints
+# ============================================================================
+
+@app.post("/api/documents/{document_id}/sanitize", response_model=SanitizeResponse)
+def sanitize_doc(
+    document_id: int,
+    request: SanitizeRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Sanitize a document using either redaction or pseudonymization.
+
+    Requires that the review is complete (all items have decisions).
+
+    Modes:
+    - redact: Replace PII with black bars (████) or [REDACTED]
+    - pseudonymize: Replace PII with consistent labels (PERSON_1, EMAIL_1, etc.)
+
+    For pseudonymization, the same entity always gets the same label throughout
+    the document, and different entities get different labels.
+    """
+    # Get document
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Validate mode
+    if request.mode not in ['redact', 'pseudonymize']:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid mode. Must be 'redact' or 'pseudonymize'"
+        )
+
+    # Validate redaction style
+    if request.mode == 'redact' and request.redaction_style not in ['bars', 'brackets']:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid redaction_style. Must be 'bars' or 'brackets'"
+        )
+
+    # Perform sanitization
+    try:
+        sanitized_content, metadata = sanitize_document(
+            document_id=document_id,
+            content=doc.content,
+            mode=request.mode,
+            db=db,
+            redaction_style=request.redaction_style or 'bars'
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Sanitization failed: {str(e)}")
+
+    # Save the sanitized output
+    output = SanitizedOutput(
+        document_id=document_id,
+        mode=request.mode,
+        redaction_style=request.redaction_style if request.mode == 'redact' else None,
+        content=sanitized_content,
+        mapping_json=metadata.get('mapping') if request.mode == 'pseudonymize' else None
+    )
+    db.add(output)
+    db.commit()
+    db.refresh(output)
+
+    # Build response
+    response = SanitizeResponse(
+        document_id=document_id,
+        mode=request.mode,
+        content=sanitized_content,
+        redaction_count=metadata.get('count', 0),
+        output_id=output.id
+    )
+
+    if request.mode == 'redact':
+        response.redactions = [
+            RedactionInfo(**r) for r in metadata.get('redactions', [])
+        ]
+    else:
+        response.pseudonym_mapping = metadata.get('mapping', {})
+
+    return response
+
+
+@app.get("/api/documents/{document_id}/sanitized-outputs", response_model=List[SanitizedOutputResponse])
+def get_sanitized_outputs(
+    document_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all sanitized outputs for a document."""
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    outputs = db.query(SanitizedOutput).filter_by(
+        document_id=document_id
+    ).order_by(SanitizedOutput.created_at.desc()).all()
+
+    return [
+        SanitizedOutputResponse(
+            id=o.id,
+            document_id=o.document_id,
+            mode=o.mode,
+            redaction_style=o.redaction_style,
+            content=o.content,
+            mapping=o.mapping_json,
+            created_at=o.created_at
+        )
+        for o in outputs
+    ]
+
+
+@app.get("/api/documents/{document_id}/sanitized-outputs/{output_id}", response_model=SanitizedOutputResponse)
+def get_sanitized_output(
+    document_id: int,
+    output_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a specific sanitized output."""
+    output = db.query(SanitizedOutput).filter_by(
+        id=output_id,
+        document_id=document_id
+    ).first()
+
+    if not output:
+        raise HTTPException(status_code=404, detail="Sanitized output not found")
+
+    return SanitizedOutputResponse(
+        id=output.id,
+        document_id=output.document_id,
+        mode=output.mode,
+        redaction_style=output.redaction_style,
+        content=output.content,
+        mapping=output.mapping_json,
+        created_at=output.created_at
+    )
+
+
+@app.get("/api/documents/{document_id}/pseudonym-mappings", response_model=PseudonymMappingResponse)
+def get_pseudonym_mappings(
+    document_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get all pseudonym mappings for a document."""
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    mappings = db.query(PseudonymMapping).filter_by(
+        document_id=document_id
+    ).all()
+
+    return PseudonymMappingResponse(
+        document_id=document_id,
+        mappings=[
+            {
+                'original': m.original_text,
+                'pseudonym': m.pseudonym,
+                'category': m.pii_category
+            }
+            for m in mappings
+        ]
+    )
+
+
+@app.delete("/api/documents/{document_id}/pseudonym-mappings")
+def clear_pseudonym_mappings(
+    document_id: int,
+    db: Session = Depends(get_db)
+):
+    """Clear all pseudonym mappings for a document (for re-pseudonymization)."""
+    doc = db.query(Document).filter(Document.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    deleted = db.query(PseudonymMapping).filter_by(
+        document_id=document_id
+    ).delete()
+
+    db.commit()
+
+    return {"status": "deleted", "count": deleted}
