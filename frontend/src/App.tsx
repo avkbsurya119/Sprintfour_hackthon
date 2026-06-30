@@ -10,7 +10,6 @@ import {
   uploadDocument,
   sanitizeDocument,
   createManualSpan,
-  updateSpanCategory,
   deleteSpan,
 } from './api';
 import type {
@@ -426,7 +425,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
   const [submitting, setSubmitting] = useState<Set<string>>(new Set());
   const [decisionHistory, setDecisionHistory] = useState<DecisionHistoryEntry[]>([]);
   const [textSelection, setTextSelection] = useState<TextSelection | null>(null);
-  const [editingSpan, setEditingSpan] = useState<{ type: 'detector' | 'risk_flag'; id: number } | null>(null);
+
   const [workflowStage, setWorkflowStage] = useState<WorkflowStage>('review');
   const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
   const activityIdRef = useRef(0);
@@ -781,29 +780,6 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
     [textSelection, DOCUMENT_ID, logActivity]
   );
 
-  // Update span category
-  const handleUpdateSpanCategory = useCallback(
-    async (spanType: 'detector' | 'risk_flag', spanId: number, newCategory: string) => {
-      try {
-        await updateSpanCategory(DOCUMENT_ID, spanType, spanId, newCategory);
-
-        if (spanType === 'detector') {
-          setDetectorSpans((spans) =>
-            spans.map((s) => (s.id === spanId ? { ...s, pii_category: newCategory } : s))
-          );
-        } else {
-          setRiskFlags((flags) =>
-            flags.map((f) => (f.id === spanId ? { ...f, pii_category: newCategory } : f))
-          );
-        }
-        setEditingSpan(null);
-      } catch (err) {
-        alert(err instanceof Error ? err.message : 'Failed to update category');
-      }
-    },
-    [DOCUMENT_ID]
-  );
-
   // Delete span
   const handleDeleteSpan = useCallback(
     async (spanType: 'detector' | 'risk_flag', spanId: number) => {
@@ -883,10 +859,6 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           onTextSelection={handleTextSelection}
           textSelection={textSelection}
           onCreateManualSpan={handleCreateManualSpan}
-          onDeleteSpan={handleDeleteSpan}
-          editingSpan={editingSpan}
-          onEditSpan={setEditingSpan}
-          onUpdateCategory={handleUpdateSpanCategory}
           documentTextRef={documentTextRef}
         />
 
@@ -1075,11 +1047,7 @@ interface DocumentViewerProps {
   onTextSelection: () => void;
   textSelection: TextSelection | null;
   onCreateManualSpan: (category: PIICategory) => void;
-  onDeleteSpan: (spanType: 'detector' | 'risk_flag', spanId: number) => void;
-  editingSpan: { type: 'detector' | 'risk_flag'; id: number } | null;
-  onEditSpan: (span: { type: 'detector' | 'risk_flag'; id: number } | null) => void;
-  onUpdateCategory: (spanType: 'detector' | 'risk_flag', spanId: number, category: string) => void;
-  documentTextRef: React.RefObject<HTMLDivElement>;
+  documentTextRef: React.RefObject<HTMLDivElement | null>;
 }
 
 function DocumentViewer({
@@ -1090,10 +1058,6 @@ function DocumentViewer({
   onTextSelection,
   textSelection,
   onCreateManualSpan,
-  onDeleteSpan,
-  editingSpan,
-  onEditSpan,
-  onUpdateCategory,
   documentTextRef,
 }: DocumentViewerProps) {
   // Build list of all spans sorted by position
