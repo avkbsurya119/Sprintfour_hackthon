@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import Ribbons from './components/Ribbons';
 import './App.css';
 import {
   fetchDocument,
@@ -44,6 +45,8 @@ const PII_CATEGORIES: { value: PIICategory; label: string }[] = [
   { value: 'id_number', label: 'ID Number' },
   { value: 'ip_address', label: 'IP Address' },
   { value: 'money', label: 'Money' },
+  { value: 'percentage', label: 'Percentage' },
+  { value: 'other', label: 'Other' },
 ];
 
 // Workflow stages
@@ -285,80 +288,117 @@ function DocumentPicker({ onSelect }: DocumentPickerProps) {
 
   return (
     <div className="picker-screen">
-      <div className="picker-card">
-        <div className="picker-logo">Conseal</div>
-        <h1 className="picker-title">PII Review Tool</h1>
-        <p className="picker-subtitle">
-          Select a document to review for personally identifiable information.
-        </p>
+      <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', zIndex: 0, opacity: 0.6, pointerEvents: 'none' }}>
+        <Ribbons
+          colors={["#8efafc", "#00A19B"]}
+          baseSpring={0.03}
+          baseFriction={0.9}
+          baseThickness={30}
+          offsetFactor={0.05}
+          maxAge={500}
+          pointCount={50}
+          speedMultiplier={0.6}
+          enableFade={false}
+          enableShaderEffect={false}
+          effectAmplitude={2}
+        />
+      </div>
 
-        <div className="picker-options">
-          {/* Demo document option */}
-          <button
-            id="btn-demo-document"
-            className="picker-option demo"
-            onClick={() => onSelect(DEMO_DOCUMENT_ID)}
-            disabled={mode === 'uploading'}
-          >
-            <div className="picker-option-icon">📋</div>
-            <div className="picker-option-body">
-              <div className="picker-option-title">Demo Document</div>
-              <div className="picker-option-desc">
-                A pre-loaded demand letter with deliberately flawed PII detection.
-                Includes false positives, false negatives, and a decoy flag.
-              </div>
+      <div className="picker-container">
+        {/* Left Column: Hero */}
+        <div className="picker-hero">
+          <div className="picker-logo-modern">CONSEAL</div>
+          <h1 className="picker-title-modern">Secure PII<br />Review Engine</h1>
+          <p className="picker-subtitle-modern">
+            Identify, review, and sanitize personally identifiable information with ensemble machine learning and human-in-the-loop precision.
+          </p>
+          <div className="picker-features">
+            <div className="feature-item">
+              <span className="feature-icon">🔍</span>
+              <span>Ensemble Detection</span>
             </div>
-            <div className="picker-option-badge">Seeded</div>
-          </button>
-
-          {/* Upload option */}
-          <div
-            id="upload-drop-zone"
-            className={`picker-option upload ${isDragging ? 'dragging' : ''} ${mode === 'uploading' ? 'uploading' : ''}`}
-            onClick={() => mode !== 'uploading' && fileInputRef.current?.click()}
-            onDrop={handleDrop}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-          >
-            <div className="picker-option-icon">
-              {mode === 'uploading' ? '⏳' : '📤'}
+            <div className="feature-item">
+              <span className="feature-icon">👥</span>
+              <span>Human-in-the-Loop</span>
             </div>
-            <div className="picker-option-body">
-              <div className="picker-option-title">
-                {mode === 'uploading' ? 'Processing…' : 'Upload Your Own'}
-              </div>
-              <div className="picker-option-desc">
-                {mode === 'uploading'
-                  ? 'Extracting text and scanning for PII…'
-                  : 'PDF or .docx — drag & drop or click to browse. PII is detected automatically.'}
-              </div>
+            <div className="feature-item">
+              <span className="feature-icon">🛡️</span>
+              <span>Secure Sanitization</span>
             </div>
-            <div className="picker-option-badge upload-badge">PDF · DOCX</div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx"
-              style={{ display: 'none' }}
-              onChange={handleFileInput}
-            />
           </div>
         </div>
 
-        {mode === 'error' && uploadError && (
-          <div className="picker-error" id="upload-error-message">
-            <span className="picker-error-icon">⚠️</span>
-            <div>
-              <strong>Upload failed</strong>
-              <div className="picker-error-detail">{uploadError}</div>
-            </div>
+        {/* Right Column: Interaction Card */}
+        <div className="picker-card modern-card">
+          <h2 className="card-heading">Select a Document</h2>
+          
+          <div className="picker-options">
+            {/* Demo document option */}
             <button
-              className="picker-error-retry"
-              onClick={() => { setMode('choose'); setUploadError(null); }}
+              id="btn-demo-document"
+              className="picker-option demo"
+              onClick={() => onSelect(DEMO_DOCUMENT_ID)}
+              disabled={mode === 'uploading'}
             >
-              Try again
+              <div className="picker-option-icon">📋</div>
+              <div className="picker-option-body">
+                <div className="picker-option-title">Demo Document</div>
+                <div className="picker-option-desc">
+                  Pre-loaded demand letter with deliberate detection flaws (false positives, false negatives).
+                </div>
+              </div>
+              <div className="picker-option-badge">Seeded</div>
             </button>
+
+            {/* Upload option */}
+            <div
+              id="upload-drop-zone"
+              className={`picker-option upload ${isDragging ? 'dragging' : ''} ${mode === 'uploading' ? 'uploading' : ''}`}
+              onClick={() => mode !== 'uploading' && fileInputRef.current?.click()}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+            >
+              <div className="picker-option-icon">
+                {mode === 'uploading' ? '⏳' : '📤'}
+              </div>
+              <div className="picker-option-body">
+                <div className="picker-option-title">
+                  {mode === 'uploading' ? 'Processing…' : 'Upload Your Own'}
+                </div>
+                <div className="picker-option-desc">
+                  {mode === 'uploading'
+                    ? 'Extracting text and scanning for PII…'
+                    : 'PDF or .docx — drag & drop or click to browse.'}
+                </div>
+              </div>
+              <div className="picker-option-badge upload-badge">PDF · DOCX</div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx"
+                style={{ display: 'none' }}
+                onChange={handleFileInput}
+              />
+            </div>
           </div>
-        )}
+
+          {mode === 'error' && uploadError && (
+            <div className="picker-error" id="upload-error-message">
+              <span className="picker-error-icon">⚠️</span>
+              <div>
+                <strong>Upload failed</strong>
+                <div className="picker-error-detail">{uploadError}</div>
+              </div>
+              <button
+                className="picker-error-retry"
+                onClick={() => { setMode('choose'); setUploadError(null); }}
+              >
+                Try again
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -610,6 +650,51 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
       alert(err instanceof Error ? err.message : 'Failed to undo');
     }
   }, [decisionHistory, logActivity]);
+
+  const handleResetDecision = useCallback(async (spanType: 'detector' | 'risk_flag', spanId: number) => {
+    try {
+      if (spanType === 'detector') {
+        const targetSpan = detectorSpans.find(s => s.id === spanId);
+        if (!targetSpan) return;
+        
+        const linkedSpans = detectorSpans.filter(s => s.text_content === targetSpan.text_content && s.decision);
+        const linkedIds = new Set(linkedSpans.map(s => s.id));
+        
+        const entriesToDelete = decisionHistory.filter(e => e.spanType === 'detector' && linkedIds.has(e.spanId));
+        await Promise.all(entriesToDelete.map(e => deleteDecision(DOCUMENT_ID, e.decisionId)));
+        
+        setDecisionHistory(h => h.filter(e => !entriesToDelete.includes(e)));
+        setDetectorSpans(spans => spans.map(s => linkedIds.has(s.id) ? { ...s, decision: null } : s));
+      } else {
+        const historyEntry = decisionHistory.find(e => e.spanType === 'risk_flag' && e.spanId === spanId);
+        if (historyEntry) {
+          await deleteDecision(DOCUMENT_ID, historyEntry.decisionId);
+          setDecisionHistory(h => h.filter(e => e.decisionId !== historyEntry.decisionId));
+        }
+        setRiskFlags(flags => flags.map(f => f.id === spanId ? { ...f, decision: null } : f));
+      }
+      logActivity('Reset decision', 'Reverted previous decision inline', 'info');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to reset decision');
+    }
+  }, [DOCUMENT_ID, decisionHistory, detectorSpans, logActivity]);
+
+  const handleResetAllDecisions = useCallback(async () => {
+    if (decisionHistory.length === 0) return;
+    if (!window.confirm('Are you sure you want to reset ALL decisions?')) return;
+    
+    try {
+      await Promise.all(decisionHistory.map(e => deleteDecision(DOCUMENT_ID, e.decisionId)));
+      setDecisionHistory([]);
+      setDetectorSpans(spans => spans.map(s => ({ ...s, decision: null })));
+      setRiskFlags(flags => flags.map(f => ({ ...f, decision: null })));
+      setStagedDismissals(new Set());
+      setSubmitting(new Set());
+      logActivity('Reset all decisions', 'Reverted all decisions', 'info');
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to reset all decisions');
+    }
+  }, [DOCUMENT_ID, decisionHistory, logActivity]);
 
   const handleSpanClick = useCallback((itemId: string) => {
     setFocusedItemId(itemId);
@@ -896,6 +981,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
                   isSubmitting={submitting.has(`detector-${span.id}`)}
                   onDecision={handleDetectorDecision}
                   onDelete={(id) => handleDeleteSpan('detector', id)}
+                  onReset={(id) => handleResetDecision('detector', id)}
                   ref={(el) => {
                     if (el) cardRefs.current.set(`detector-${span.id}`, el);
                   }}
@@ -943,9 +1029,14 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
             </div>
 
             {decisionHistory.length > 0 && (
-              <button className="btn-undo" onClick={handleUndo}>
-                Undo Last Decision
-              </button>
+              <div className="reset-actions">
+                <button className="btn-undo" onClick={handleUndo}>
+                  Undo Last Decision
+                </button>
+                <button className="btn-reset-all" onClick={handleResetAllDecisions}>
+                  Reset All
+                </button>
+              </div>
             )}
             <button
               className="btn-complete"
@@ -1185,10 +1276,11 @@ interface DetectorSpanCardProps {
   onDecision: (spanId: number, decision: 'approve' | 'reject') => void;
   onDelete?: (spanId: number) => void;
   onEditCategory?: (spanId: number) => void;
+  onReset?: (spanId: number) => void;
 }
 
 const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>(
-  ({ span, linkedCount, isFocused, isSubmitting, onDecision, onDelete, onEditCategory }, ref) => {
+  ({ span, linkedCount, isFocused, isSubmitting, onDecision, onDelete, onEditCategory, onReset }, ref) => {
     const decided = !!span.decision;
     const category = getCategoryLabel(span);
     const isLinked = linkedCount > 1;
@@ -1211,9 +1303,20 @@ const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>
             <span className={`decided-text ${span.decision === 'approve' ? 'redacted-text' : ''}`}>
               {span.text_content}
             </span>
-            <span className={`decision-badge ${span.decision}`}>
-              {span.decision === 'approve' ? 'Redacted' : 'Kept Visible'}
-            </span>
+            <div className="decided-actions">
+              <span className={`decision-badge ${span.decision}`}>
+                {span.decision === 'approve' ? 'Redacted' : 'Kept Visible'}
+              </span>
+              {onReset && (
+                <button 
+                  className="btn-reset-decision" 
+                  onClick={(e) => { e.stopPropagation(); onReset(span.id); }}
+                  title="Undo this decision"
+                >
+                  ↩ Reset
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <>
@@ -1320,10 +1423,11 @@ interface RiskFlagCardProps {
   isSubmitting: boolean;
   onAction: (flagId: number, action: 'redact' | 'stage' | 'confirm-dismiss') => void;
   onDelete?: (flagId: number) => void;
+  onReset?: (flagId: number) => void;
 }
 
 const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
-  ({ flag, urgency, isStaged, isFocused, isSubmitting, onAction, onDelete }, ref) => {
+  ({ flag, urgency, isStaged, isFocused, isSubmitting, onAction, onDelete, onReset }, ref) => {
     const decided = !!flag.decision;
     const confidence = flag.confidence_score;
     const isManual = flag.is_manual;
@@ -1341,9 +1445,20 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
             <span className={`decided-text ${flag.decision === 'redact' ? 'redacted-text' : ''}`}>
               {flag.text_content}
             </span>
-            <span className={`decision-badge ${flag.decision}`}>
-              {flag.decision === 'redact' ? 'Redacted' : 'Dismissed'}
-            </span>
+            <div className="decided-actions">
+              <span className={`decision-badge ${flag.decision}`}>
+                {flag.decision === 'redact' ? 'Redacted' : 'Dismissed'}
+              </span>
+              {onReset && (
+                <button 
+                  className="btn-reset-decision" 
+                  onClick={(e) => { e.stopPropagation(); onReset(flag.id); }}
+                  title="Undo this decision"
+                >
+                  ↩ Reset
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <>

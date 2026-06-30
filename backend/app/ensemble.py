@@ -62,7 +62,7 @@ REVIEW_CATEGORIES = {
     'url', 'username', 'id_number', 'address', 'account_number',
     'customer_id', 'employee_id', 'invoice', 'order_number',
     'reference_number', 'case_number', 'policy_number', 'license_number',
-    'money', 'alphanumeric_id'
+    'money', 'alphanumeric_id', 'percentage', 'other'
 }
 
 
@@ -187,7 +187,7 @@ def run_spacy(text: str) -> List[Dict[str, Any]]:
                 'date': 'date',
                 'time': 'date',
                 'money': 'money',
-                'percent': None,  # Skip percentages
+                'percent': 'percentage',
                 'cardinal': None,  # Skip raw numbers
                 'ordinal': None,  # Skip ordinals
                 'quantity': None,  # Skip quantities
@@ -308,7 +308,13 @@ def reconcile_spans(all_detections: List[Dict[str, Any]]) -> List[Dict[str, Any]
                 normalized_sources.add(s)
         sources = list(normalized_sources)
 
-        types = list(set(d['type'] for d in cluster))
+        # Normalize types from enhanced regex
+        type_mapping = {
+            'name_caps': 'name',
+            'location_indian': 'location',
+            'username_lax': 'username'
+        }
+        types = list(set(type_mapping.get(d['type'], d['type']) for d in cluster))
         agreement_count = len(sources)
 
         # Compute confidence score based on agreement and sources

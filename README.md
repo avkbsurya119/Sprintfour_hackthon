@@ -70,6 +70,11 @@ Dismissing a flagged risk requires two clicks (stage → confirm), adding fricti
 ### Risk-Framed Summary
 Completion shows "exposures caught" and "exposures missed" — not just accuracy percentages.
 
+### Premium Review Interface
+- **Interactive Landing Page:** Incorporates a 3D WebGL Ribbons background (powered by React Bits & OGL) with a modern Ice Latte & Mint color palette.
+- **Inline Unredact & Reset All:** Quickly fix mistakes with inline resets on every card, or revert the entire document's decisions with a single "Reset All" button.
+- **Enhanced Detection:** Upgraded regex rules specifically target edge cases like malformed emails lacking TLDs, ALL CAPS Indian names, unstructured usernames, and percentages.
+
 ## Demo Document
 
 A debt collection demand letter with:

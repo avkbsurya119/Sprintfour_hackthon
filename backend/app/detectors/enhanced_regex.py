@@ -129,9 +129,9 @@ class EnhancedRegexDetector:
                 r')\b'
             ),
 
-            # Email Address
+            # Email Address (allow missing TLD for internal/malformed emails)
             'email': re.compile(
-                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'
+                r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+(?:[A-Za-z]{2,})?\b'
             ),
 
             # US Street Address (basic pattern)
@@ -185,6 +185,11 @@ class EnhancedRegexDetector:
                 r'(?:^|(?<=[^a-zA-Z0-9]))@[A-Za-z][A-Za-z0-9_]{2,30}\b'
             ),
 
+            # Lax Username (for things like amrithasnidhi-123 without @)
+            'username_lax': re.compile(
+                r'\b[a-z]+(?:[-_][a-z0-9]+)+[a-z0-9]*\b'
+            ),
+
             # ==================== REFERENCE NUMBERS ====================
 
             # Invoice Number
@@ -207,7 +212,20 @@ class EnhancedRegexDetector:
 
             # Employee ID
             'employee_id': re.compile(
-                r'\b(?:Employee|EMP|EID|Staff)[-:#\s]*[A-Z0-9-]{4,15}\b',
+                r'\b(?:EMP|Employee\s*ID)[-:#\s]*[A-Z0-9-]{4,15}\b',
+                re.IGNORECASE
+            ),
+
+            # ==================== ADDITIONAL DETECTORS ====================
+
+            # ALL CAPS NAMES (often missed by spaCy)
+            'name_caps': re.compile(
+                r'\b[A-Z]{2,}(?:\s+[A-Z]{1,})+\b'
+            ),
+
+            # Common Indian Locations / States
+            'location_indian': re.compile(
+                r'\b(?:Kerala|Karnataka|Maharashtra|Tamil Nadu|Delhi|Gujarat|Rajasthan|Punjab|Haryana|Bengaluru|Mumbai|Chennai|Kolkata|Hyderabad|Pune|Alappuzha|Kochi|Trivandrum)\b',
                 re.IGNORECASE
             ),
 
@@ -226,6 +244,12 @@ class EnhancedRegexDetector:
             # Account Number (generic)
             'account_number': re.compile(
                 r'\b(?:Account|Acct|A/C)[-:#\s]*[A-Z0-9-]{4,20}\b',
+                re.IGNORECASE
+            ),
+
+            # Percentages
+            'percentage': re.compile(
+                r'\b\d+(?:\.\d+)?\s*(?:%|percent)\b',
                 re.IGNORECASE
             ),
 
@@ -335,10 +359,14 @@ class EnhancedRegexDetector:
             ('account_number', 'account_number'),
 
             # Generic (lower priority)
+            ('location_indian', 'location_indian'),
+            ('name_caps', 'name_caps'),
             ('username', 'username'),
+            ('username_lax', 'username_lax'),
             ('alphanumeric_id', 'id_number'),
             ('name', 'name'),
             ('date', 'date'),
+            ('percentage', 'percentage'),
         ]
 
         for pattern_name, pii_type in pattern_priority:

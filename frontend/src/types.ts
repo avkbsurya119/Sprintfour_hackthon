@@ -20,7 +20,9 @@ export type PIICategory =
   | 'username'
   | 'id_number'
   | 'ip_address'
-  | 'money';
+  | 'money'
+  | 'percentage'
+  | 'other';
 
 export interface DetectorSpan {
   id: number;

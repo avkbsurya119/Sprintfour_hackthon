@@ -282,3 +282,27 @@ No ground truth is stored for uploaded documents. `compute_summary` handles this
 **On the absence of false-negative simulation for uploads:** For the demo document, a phone number the detector *missed* appears in `risk_flags` as a dangerous catch — because there's a hand-crafted ground truth to miss against. For an uploaded document, a phone number the regex finds goes into `detector_spans` directly. There's no false-negative drama, no "dangerous miss" framing — because there's no hand-crafted ground truth to miss against. The review experience is still complete and correct; it just doesn't have the deliberate pedagogical tension the demo document was designed to create. That's honest, not a gap. Uploaded documents are real, not demo scaffolding.
 
 **Tradeoffs:** The completion summary's GT-dependent metrics (exposures caught/missed) are meaningless for uploaded documents and display as zero. This is disclosed by design — the summary still shows `total_reviewed` accurately, and the core review workflow is fully functional.
+
+---
+
+## 20. Landing Page UI: WebGL Ribbons
+
+**Decision:** Added a premium, interactive WebGL Ribbons background to the document picker landing page.
+
+**Why this choice:** Elevates the tool from a standard hackathon UI to a premium product experience. The minimalist Ice Latte & Mint color combo (`#E4DDD3` / `#00A19B`) contrasts well with the fluid 3D animation, creating a modern, high-contrast look without distracting from the main call-to-action.
+
+---
+
+## 21. Inline Undo and Reset All
+
+**Decision:** Provided both inline "Reset" on decided cards and a global "Reset All" button.
+
+**Why this choice:** Reviewers need escape hatches. If they misclick one card, they can reset it instantly without relying on a linear undo stack. If they realize they took the wrong strategy for the whole document (e.g. they wanted to pseudonymize instead of redact), they can reset everything at once.
+
+---
+
+## 22. Regex Enhancements for Edge Cases
+
+**Decision:** Added targeted regex patterns for ALL CAPS names, malformed emails (missing a TLD), percentages, and Indian states/cities.
+
+**Why this choice:** Standard ML models (like spaCy or Presidio) often fail on OCR anomalies like ALL CAPS text or domain-less emails. Implementing fallback regex guarantees these edge cases are caught reliably, preventing dangerous false negatives in messy real-world data.
