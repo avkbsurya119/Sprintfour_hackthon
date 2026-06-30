@@ -925,6 +925,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
                       isSubmitting={submitting.has(`risk-${flag.id}`)}
                       onAction={handleRiskFlagAction}
                       onDelete={(id) => handleDeleteSpan('risk_flag', id)}
+                      onReset={(id) => handleResetDecision('risk_flag', id)}
                       ref={(el) => {
                         if (el) cardRefs.current.set(`risk-${flag.id}`, el);
                       }}
@@ -949,6 +950,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
                       isSubmitting={submitting.has(`risk-${flag.id}`)}
                       onAction={handleRiskFlagAction}
                       onDelete={(id) => handleDeleteSpan('risk_flag', id)}
+                      onReset={(id) => handleResetDecision('risk_flag', id)}
                       ref={(el) => {
                         if (el) cardRefs.current.set(`risk-${flag.id}`, el);
                       }}
