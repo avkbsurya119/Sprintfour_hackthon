@@ -66,6 +66,106 @@ interface TextSelection {
   rect: DOMRect;
 }
 
+// Workflow Progress Component
+interface WorkflowProgressProps {
+  currentStage: WorkflowStage;
+  documentTitle?: string;
+}
+
+function WorkflowProgress({ currentStage, documentTitle }: WorkflowProgressProps) {
+  const stages: { key: WorkflowStage; label: string; icon: string }[] = [
+    { key: 'upload', label: 'Upload', icon: '📤' },
+    { key: 'detecting', label: 'Detecting', icon: '🔍' },
+    { key: 'review', label: 'Review', icon: '✏️' },
+    { key: 'export', label: 'Export', icon: '📥' },
+  ];
+
+  const currentIndex = stages.findIndex((s) => s.key === currentStage);
+
+  return (
+    <div className="workflow-progress">
+      <div className="workflow-stages">
+        {stages.map((stage, idx) => {
+          const isCompleted = idx < currentIndex;
+          const isCurrent = idx === currentIndex;
+          const isPending = idx > currentIndex;
+
+          return (
+            <React.Fragment key={stage.key}>
+              <div
+                className={`workflow-stage ${isCompleted ? 'completed' : ''} ${isCurrent ? 'current' : ''} ${isPending ? 'pending' : ''}`}
+              >
+                <div className="stage-icon">
+                  {isCompleted ? '✓' : stage.icon}
+                </div>
+                <div className="stage-label">{stage.label}</div>
+              </div>
+              {idx < stages.length - 1 && (
+                <div className={`workflow-connector ${isCompleted ? 'completed' : ''}`} />
+              )}
+            </React.Fragment>
+          );
+        })}
+      </div>
+      {documentTitle && (
+        <div className="workflow-document-title">
+          Working on: <strong>{documentTitle}</strong>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Activity Log Component
+interface ActivityLogProps {
+  entries: ActivityLogEntry[];
+  onClear?: () => void;
+}
+
+function ActivityLog({ entries, onClear }: ActivityLogProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (entries.length === 0) return null;
+
+  const recentEntries = isExpanded ? entries : entries.slice(-3);
+
+  return (
+    <div className="activity-log">
+      <div className="activity-log-header">
+        <span className="activity-log-title">
+          Activity Log ({entries.length})
+        </span>
+        <div className="activity-log-actions">
+          <button
+            className="btn-toggle-log"
+            onClick={() => setIsExpanded(!isExpanded)}
+          >
+            {isExpanded ? 'Collapse' : 'Show All'}
+          </button>
+          {onClear && (
+            <button className="btn-clear-log" onClick={onClear}>
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="activity-log-entries">
+        {recentEntries.map((entry) => (
+          <div key={entry.id} className={`activity-entry ${entry.type}`}>
+            <span className="activity-time">
+              {entry.timestamp.toLocaleTimeString()}
+            </span>
+            <span className="activity-action">{entry.action}</span>
+            {entry.details && (
+              <span className="activity-details">{entry.details}</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [activeDocumentId, setActiveDocumentId] = useState<number | null>(null);
 
@@ -287,6 +387,23 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
   const [decisionHistory, setDecisionHistory] = useState<DecisionHistoryEntry[]>([]);
   const [textSelection, setTextSelection] = useState<TextSelection | null>(null);
   const [editingSpan, setEditingSpan] = useState<{ type: 'detector' | 'risk_flag'; id: number } | null>(null);
+  const [workflowStage, setWorkflowStage] = useState<WorkflowStage>('review');
+  const [activityLog, setActivityLog] = useState<ActivityLogEntry[]>([]);
+  const activityIdRef = useRef(0);
+
+  // Helper to add activity log entry
+  const logActivity = useCallback((action: string, details?: string, type: ActivityLogEntry['type'] = 'info') => {
+    setActivityLog((log) => [
+      ...log,
+      {
+        id: ++activityIdRef.current,
+        timestamp: new Date(),
+        action,
+        details,
+        type,
+      },
+    ]);
+  }, []);
   const [selectedMode, setSelectedMode] = useState<SanitizationMode>('redact');
   const [selectedStyle, setSelectedStyle] = useState<RedactionStyle>('bars');
 
@@ -304,6 +421,11 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         setCurrentDoc(doc);
         setDetectorSpans(items.detector_spans);
         setRiskFlags(items.risk_flags);
+        logActivity(
+          'Document loaded',
+          `${items.detector_spans.length} detections, ${items.risk_flags.length} risk flags`,
+          'info'
+        );
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load');
       } finally {
@@ -311,7 +433,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
       }
     }
     loadData();
-  }, []);
+  }, [logActivity]);
 
   // Decision handlers with double-click protection and span linking
   const handleDetectorDecision = useCallback(
@@ -360,6 +482,14 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
             groupId: linkedSpans.length > 1 ? groupId : undefined,
           })),
         ]);
+
+        // Log activity
+        const actionLabel = decision === 'approve' ? 'Kept redacted' : 'Released';
+        logActivity(
+          actionLabel,
+          `"${targetSpan.text_content.slice(0, 30)}${targetSpan.text_content.length > 30 ? '...' : ''}"${linkedSpans.length > 1 ? ` (×${linkedSpans.length})` : ''}`,
+          'decision'
+        );
       } finally {
         setSubmitting((s) => {
           const next = new Set(s);
@@ -368,7 +498,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         });
       }
     },
-    [submitting, detectorSpans]
+    [submitting, detectorSpans, logActivity]
   );
 
   const handleRiskFlagAction = useCallback(
@@ -382,6 +512,8 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
       if (submitting.has(key)) return;
 
       const decision = action === 'redact' ? 'redact' : 'dismiss';
+
+      const targetFlag = riskFlags.find((f) => f.id === flagId);
 
       setSubmitting((s) => new Set(s).add(key));
       try {
@@ -400,6 +532,14 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           spanId: flagId,
           decision,
         }]);
+
+        // Log activity
+        const actionLabel = decision === 'redact' ? 'Redacted risk' : 'Dismissed risk';
+        logActivity(
+          actionLabel,
+          `"${targetFlag?.text_content.slice(0, 30)}${(targetFlag?.text_content.length || 0) > 30 ? '...' : ''}"`,
+          'decision'
+        );
       } finally {
         setSubmitting((s) => {
           const next = new Set(s);
@@ -408,17 +548,23 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         });
       }
     },
-    [submitting]
+    [submitting, riskFlags, logActivity]
   );
 
   const handleComplete = useCallback(async () => {
     try {
       const result = await completeReview(DOCUMENT_ID);
       setSummary(result);
+      setWorkflowStage('export');
+      logActivity(
+        'Review completed',
+        `${result.total_reviewed} items reviewed`,
+        'info'
+      );
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to complete');
     }
-  }, []);
+  }, [logActivity]);
 
   const handleUndo = useCallback(async () => {
     if (decisionHistory.length === 0) return;
@@ -458,10 +604,12 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           ? h.filter((e) => e.groupId !== groupIdToRemove)
           : h.slice(0, -1)
       );
+
+      logActivity('Undid last decision', `${groupEntries.length} item(s) reverted`, 'info');
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to undo');
     }
-  }, [decisionHistory]);
+  }, [decisionHistory, logActivity]);
 
   const handleSpanClick = useCallback((itemId: string) => {
     setFocusedItemId(itemId);
@@ -535,11 +683,17 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         setDetectorSpans((spans) => [...spans, newSpan].sort((a, b) => a.start_offset - b.start_offset));
         setTextSelection(null);
         window.getSelection()?.removeAllRanges();
+
+        logActivity(
+          'Manually marked PII',
+          `"${result.text_content.slice(0, 20)}..." as ${category.toUpperCase()}`,
+          'manual'
+        );
       } catch (err) {
         alert(err instanceof Error ? err.message : 'Failed to create span');
       }
     },
-    [textSelection, DOCUMENT_ID]
+    [textSelection, DOCUMENT_ID, logActivity]
   );
 
   // Update span category
@@ -570,6 +724,11 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
     async (spanType: 'detector' | 'risk_flag', spanId: number) => {
       if (!confirm('Are you sure you want to remove this detection?')) return;
 
+      // Get text content before deletion for logging
+      const targetText = spanType === 'detector'
+        ? detectorSpans.find((s) => s.id === spanId)?.text_content
+        : riskFlags.find((f) => f.id === spanId)?.text_content;
+
       try {
         await deleteSpan(DOCUMENT_ID, spanType, spanId);
 
@@ -578,11 +737,17 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         } else {
           setRiskFlags((flags) => flags.filter((f) => f.id !== spanId));
         }
+
+        logActivity(
+          'Removed detection',
+          `"${targetText?.slice(0, 25)}${(targetText?.length || 0) > 25 ? '...' : ''}"`,
+          'manual'
+        );
       } catch (err) {
         alert(err instanceof Error ? err.message : 'Failed to delete span');
       }
     },
-    [DOCUMENT_ID]
+    [DOCUMENT_ID, detectorSpans, riskFlags, logActivity]
   );
 
   // Clear selection when clicking elsewhere
@@ -621,7 +786,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           </button>
           <h1>Conseal Review</h1>
         </div>
-        <span className="header-status">{currentDoc.title}</span>
+        <WorkflowProgress currentStage={workflowStage} documentTitle={currentDoc.title} />
       </header>
 
       <main className="main-content">
@@ -789,6 +954,8 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
             >
               {allDecided ? 'Complete Review' : `${totalItems - decidedItems} items remaining`}
             </button>
+            
+            <ActivityLog entries={activityLog} onClear={() => setActivityLog([])} />
           </div>
         </aside>
       </main>
