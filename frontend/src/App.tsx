@@ -418,31 +418,36 @@ const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>
         ref={ref}
         className={`review-card detector ${decided ? 'decided' : ''} ${isFocused ? 'focused' : ''}`}
       >
-        <div className="card-header">
-          <span className="category-label">Proposed redaction</span>
-        </div>
-        <div className="card-content">{span.text_content}</div>
         {decided ? (
-          <div className={`decision-badge ${span.decision}`}>
-            {span.decision === 'approve' ? 'Kept redacted' : 'Released'}
+          <div className="decided-summary">
+            <span className="decided-text">{span.text_content}</span>
+            <span className={`decision-badge ${span.decision}`}>
+              {span.decision === 'approve' ? 'Kept' : 'Released'}
+            </span>
           </div>
         ) : (
-          <div className="card-actions">
-            <button
-              className="btn btn-approve"
-              disabled={isSubmitting}
-              onClick={() => onDecision(span.id, 'approve')}
-            >
-              Keep Redacted
-            </button>
-            <button
-              className="btn btn-reject"
-              disabled={isSubmitting}
-              onClick={() => onDecision(span.id, 'reject')}
-            >
-              Release
-            </button>
-          </div>
+          <>
+            <div className="card-header">
+              <span className="category-label">Proposed redaction</span>
+            </div>
+            <div className="card-content">{span.text_content}</div>
+            <div className="card-actions">
+              <button
+                className="btn btn-approve"
+                disabled={isSubmitting}
+                onClick={() => onDecision(span.id, 'approve')}
+              >
+                Keep Redacted
+              </button>
+              <button
+                className="btn btn-reject"
+                disabled={isSubmitting}
+                onClick={() => onDecision(span.id, 'reject')}
+              >
+                Release
+              </button>
+            </div>
+          </>
         )}
       </div>
     );
@@ -468,53 +473,61 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
         ref={ref}
         className={`review-card risk-flag ${urgency} ${decided ? 'decided' : ''} ${isStaged ? 'staged' : ''} ${isFocused ? 'focused' : ''}`}
       >
-        <div className="card-header">
-          <span className={`urgency-badge ${urgency}`}>
-            {urgency === 'critical' ? 'High Risk' : 'Review'}
-          </span>
-          <span className="category-label">
-            Potential {flag.pii_category.toUpperCase()}
-          </span>
-        </div>
-        <div className="card-content">{flag.text_content}</div>
-
-        {isStaged && !decided && (
-          <div className="staged-warning">
-            Click again to confirm dismissal
-          </div>
-        )}
-
         {decided ? (
-          <div className={`decision-badge ${flag.decision}`}>
-            {flag.decision === 'redact' ? 'Added to redactions' : 'Dismissed'}
+          <div className="decided-summary">
+            <span className={`urgency-badge ${urgency}`}>
+              {urgency === 'critical' ? 'High' : 'Review'}
+            </span>
+            <span className="decided-text">{flag.text_content}</span>
+            <span className={`decision-badge ${flag.decision}`}>
+              {flag.decision === 'redact' ? 'Redacted' : 'Dismissed'}
+            </span>
           </div>
         ) : (
-          <div className="card-actions">
-            <button
-              className="btn btn-redact"
-              disabled={isSubmitting}
-              onClick={() => onAction(flag.id, 'redact')}
-            >
-              Redact This
-            </button>
-            {isStaged ? (
-              <button
-                className="btn btn-confirm-dismiss"
-                disabled={isSubmitting}
-                onClick={() => onAction(flag.id, 'confirm-dismiss')}
-              >
-                Confirm Dismiss
-              </button>
-            ) : (
-              <button
-                className="btn btn-dismiss"
-                disabled={isSubmitting}
-                onClick={() => onAction(flag.id, 'stage')}
-              >
-                Dismiss
-              </button>
+          <>
+            <div className="card-header">
+              <span className={`urgency-badge ${urgency}`}>
+                {urgency === 'critical' ? 'High Risk' : 'Review'}
+              </span>
+              <span className="category-label">
+                Potential {flag.pii_category.toUpperCase()}
+              </span>
+            </div>
+            <div className="card-content">{flag.text_content}</div>
+
+            {isStaged && (
+              <div className="staged-warning">
+                Click again to confirm dismissal
+              </div>
             )}
-          </div>
+
+            <div className="card-actions">
+              <button
+                className="btn btn-redact"
+                disabled={isSubmitting}
+                onClick={() => onAction(flag.id, 'redact')}
+              >
+                Redact This
+              </button>
+              {isStaged ? (
+                <button
+                  className="btn btn-confirm-dismiss"
+                  disabled={isSubmitting}
+                  onClick={() => onAction(flag.id, 'confirm-dismiss')}
+                >
+                  Confirm Dismiss
+                </button>
+              ) : (
+                <button
+                  className="btn btn-dismiss"
+                  disabled={isSubmitting}
+                  onClick={() => onAction(flag.id, 'stage')}
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          </>
         )}
       </div>
     );

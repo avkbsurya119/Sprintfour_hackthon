@@ -243,19 +243,59 @@ body {
 }
 
 .review-card.decided {
-  opacity: 0.6;
+  opacity: 0.7;
+  padding: 8px 12px;
 }
 
-/* Risk flag cards - visual urgency */
+/* Collapsed decided card - single line */
+.decided-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.decided-summary .decided-text {
+  flex: 1;
+  font-family: 'SF Mono', 'Monaco', 'Consolas', monospace;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.decided-summary .decision-badge {
+  flex-shrink: 0;
+}
+
+.decided-summary .urgency-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  padding: 1px 4px;
+}
+
+/* Risk flag cards - visual urgency with left accent */
 .review-card.risk-flag.critical {
   border-color: var(--critical-border);
   border-width: 2px;
+  border-left-width: 5px;
   background: var(--critical-bg);
+  box-shadow: 0 2px 8px rgba(220, 38, 38, 0.15);
+}
+
+.review-card.risk-flag.critical:not(.decided) {
+  animation: pulse-critical 2s ease-in-out infinite;
+}
+
+@keyframes pulse-critical {
+  0%, 100% { box-shadow: 0 2px 8px rgba(220, 38, 38, 0.15); }
+  50% { box-shadow: 0 2px 12px rgba(220, 38, 38, 0.3); }
 }
 
 .review-card.risk-flag.elevated {
   border-color: var(--elevated-border);
+  border-left-width: 4px;
   background: var(--elevated-bg);
+  box-shadow: 0 1px 4px rgba(217, 119, 6, 0.1);
 }
 
 .review-card.risk-flag.staged {
