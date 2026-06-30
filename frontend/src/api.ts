@@ -14,12 +14,19 @@ export async function fetchReviewItems(documentId: number): Promise<ReviewItems>
   return response.json();
 }
 
+export interface DecisionResult {
+  id: number;
+  span_type: string;
+  span_id: number;
+  decision: string;
+}
+
 export async function submitDecision(
   documentId: number,
   spanType: SpanType,
   spanId: number,
   decision: string
-): Promise<void> {
+): Promise<DecisionResult> {
   const response = await fetch(`${API_BASE}/documents/${documentId}/decisions`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -30,6 +37,18 @@ export async function submitDecision(
     }),
   });
   if (!response.ok) throw new Error('Failed to submit decision');
+  return response.json();
+}
+
+export async function deleteDecision(
+  documentId: number,
+  decisionId: number
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/documents/${documentId}/decisions/${decisionId}`,
+    { method: 'DELETE' }
+  );
+  if (!response.ok) throw new Error('Failed to delete decision');
 }
 
 export async function completeReview(documentId: number): Promise<Summary> {

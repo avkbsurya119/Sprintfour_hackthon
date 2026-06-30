@@ -185,6 +185,26 @@ def create_decision(
     return decision
 
 
+@app.delete("/api/documents/{document_id}/decisions/{decision_id}")
+def delete_decision(
+    document_id: int,
+    decision_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a user decision (for undo functionality)."""
+    decision = db.query(UserDecision).filter(
+        UserDecision.id == decision_id,
+        UserDecision.document_id == document_id
+    ).first()
+
+    if not decision:
+        raise HTTPException(status_code=404, detail="Decision not found")
+
+    db.delete(decision)
+    db.commit()
+    return {"status": "deleted", "id": decision_id}
+
+
 @app.post("/api/documents/{document_id}/complete", response_model=SummaryResponse)
 def complete_review(document_id: int, db: Session = Depends(get_db)):
     """
