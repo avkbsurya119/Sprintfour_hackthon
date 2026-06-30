@@ -6,6 +6,7 @@ import {
   submitDecision,
   completeReview,
   deleteDecision,
+  uploadDocument,
 } from './api';
 import type {
   Document,
@@ -15,12 +16,51 @@ import type {
   ReviewableItem,
 } from './types';
 
-const DOCUMENT_ID = 1;
+const DEMO_DOCUMENT_ID = 1;
+
+function App() {
+  const [activeDocumentId, setActiveDocumentId] = useState<number | null>(null);
+
+  if (activeDocumentId === null) {
+    return <DocumentPicker onSelect={setActiveDocumentId} />;
+  }
+
+  return <ReviewApp documentId={activeDocumentId} onBack={() => setActiveDocumentId(null)} />;
+}
 
 function getUrgency(flag: RiskFlag): 'critical' | 'elevated' {
   return flag.pii_category === 'phone' || flag.pii_category === 'ssn'
     ? 'critical'
     : 'elevated';
+}
+
+// Infer category label from text content for detector spans
+function inferCategory(text: string): string {
+  const trimmed = text.trim();
+
+  // SSN pattern: ###-##-####
+  if (/^\d{3}-\d{2}-\d{4}$/.test(trimmed)) return 'SSN';
+
+  // Phone pattern: ###-###-####
+  if (/^\d{3}-\d{3}-\d{4}$/.test(trimmed)) return 'PHONE';
+
+  // Email pattern
+  if (/@/.test(trimmed)) return 'EMAIL';
+
+  // Dollar amount
+  if (/^\$[\d,]+(\.\d{2})?$/.test(trimmed)) return 'AMOUNT';
+
+  // Date patterns
+  if (/^(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}$/i.test(trimmed)) return 'DATE';
+
+  // Capitalized words (likely names or proper nouns)
+  if (/^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$/.test(trimmed)) return 'NAME';
+  if (/^[A-Z][a-z]+(\s+(&|and)\s+[A-Z][a-z]+)+/.test(trimmed)) return 'ORG';
+
+  // Multi-word capitalized (organization, court, etc.)
+  if (/^([A-Z][a-z]*\s+)+[A-Z][a-z]*$/.test(trimmed)) return 'ORG';
+
+  return 'TEXT';
 }
 
 // Track decision history for undo
@@ -29,9 +69,142 @@ interface DecisionHistoryEntry {
   spanType: 'detector' | 'risk_flag';
   spanId: number;
   decision: string;
+  groupId?: string;  // Links entries that were submitted together (linked spans)
 }
 
-function App() {
+// =============================================================================
+// Document Picker Screen
+// =============================================================================
+
+interface DocumentPickerProps {
+  onSelect: (documentId: number) => void;
+}
+
+function DocumentPicker({ onSelect }: DocumentPickerProps) {
+  const [mode, setMode] = useState<'choose' | 'uploading' | 'error'>('choose');
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = useCallback(async (file: File) => {
+    setMode('uploading');
+    setUploadError(null);
+    try {
+      const result = await uploadDocument(file);
+      onSelect(result.document_id);
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Upload failed');
+      setMode('error');
+    }
+  }, [onSelect]);
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) handleFile(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
+  const handleDragLeave = () => setIsDragging(false);
+
+  return (
+    <div className="picker-screen">
+      <div className="picker-card">
+        <div className="picker-logo">Conseal</div>
+        <h1 className="picker-title">PII Review Tool</h1>
+        <p className="picker-subtitle">
+          Select a document to review for personally identifiable information.
+        </p>
+
+        <div className="picker-options">
+          {/* Demo document option */}
+          <button
+            id="btn-demo-document"
+            className="picker-option demo"
+            onClick={() => onSelect(DEMO_DOCUMENT_ID)}
+            disabled={mode === 'uploading'}
+          >
+            <div className="picker-option-icon">📋</div>
+            <div className="picker-option-body">
+              <div className="picker-option-title">Demo Document</div>
+              <div className="picker-option-desc">
+                A pre-loaded demand letter with deliberately flawed PII detection.
+                Includes false positives, false negatives, and a decoy flag.
+              </div>
+            </div>
+            <div className="picker-option-badge">Seeded</div>
+          </button>
+
+          {/* Upload option */}
+          <div
+            id="upload-drop-zone"
+            className={`picker-option upload ${isDragging ? 'dragging' : ''} ${mode === 'uploading' ? 'uploading' : ''}`}
+            onClick={() => mode !== 'uploading' && fileInputRef.current?.click()}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+          >
+            <div className="picker-option-icon">
+              {mode === 'uploading' ? '⏳' : '📤'}
+            </div>
+            <div className="picker-option-body">
+              <div className="picker-option-title">
+                {mode === 'uploading' ? 'Processing…' : 'Upload Your Own'}
+              </div>
+              <div className="picker-option-desc">
+                {mode === 'uploading'
+                  ? 'Extracting text and scanning for PII…'
+                  : 'PDF or .docx — drag & drop or click to browse. PII is detected automatically.'}
+              </div>
+            </div>
+            <div className="picker-option-badge upload-badge">PDF · DOCX</div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx"
+              style={{ display: 'none' }}
+              onChange={handleFileInput}
+            />
+          </div>
+        </div>
+
+        {mode === 'error' && uploadError && (
+          <div className="picker-error" id="upload-error-message">
+            <span className="picker-error-icon">⚠️</span>
+            <div>
+              <strong>Upload failed</strong>
+              <div className="picker-error-detail">{uploadError}</div>
+            </div>
+            <button
+              className="picker-error-retry"
+              onClick={() => { setMode('choose'); setUploadError(null); }}
+            >
+              Try again
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// =============================================================================
+// Review App (existing logic, unchanged — just accepts documentId as prop)
+// =============================================================================
+
+interface ReviewAppProps {
+  documentId: number;
+  onBack: () => void;
+}
+
+function ReviewApp({ documentId, onBack }: ReviewAppProps) {
+  const DOCUMENT_ID = documentId;
   const [document, setDocument] = useState<Document | null>(null);
   const [detectorSpans, setDetectorSpans] = useState<DetectorSpan[]>([]);
   const [riskFlags, setRiskFlags] = useState<RiskFlag[]>([]);
@@ -65,33 +238,62 @@ function App() {
     loadData();
   }, []);
 
-  // Decision handlers with double-click protection
+  // Decision handlers with double-click protection and span linking
   const handleDetectorDecision = useCallback(
     async (spanId: number, decision: 'approve' | 'reject') => {
       const key = `detector-${spanId}`;
       if (submitting.has(key)) return;
 
-      setSubmitting((s) => new Set(s).add(key));
+      // Find all spans with same text_content (linked spans)
+      const targetSpan = detectorSpans.find((s) => s.id === spanId);
+      if (!targetSpan) return;
+
+      const linkedSpans = detectorSpans.filter(
+        (s) => s.text_content === targetSpan.text_content && !s.decision
+      );
+
+      // Mark all linked spans as submitting
+      const keys = linkedSpans.map((s) => `detector-${s.id}`);
+      setSubmitting((s) => {
+        const next = new Set(s);
+        keys.forEach((k) => next.add(k));
+        return next;
+      });
+
       try {
-        const result = await submitDecision(DOCUMENT_ID, 'detector', spanId, decision);
-        setDetectorSpans((spans) =>
-          spans.map((s) => (s.id === spanId ? { ...s, decision } : s))
+        // Submit decisions for all linked spans
+        const results = await Promise.all(
+          linkedSpans.map((s) => submitDecision(DOCUMENT_ID, 'detector', s.id, decision))
         );
-        setDecisionHistory((h) => [...h, {
-          decisionId: result.id,
-          spanType: 'detector',
-          spanId,
-          decision,
-        }]);
+
+        // Update all linked spans in UI
+        setDetectorSpans((spans) =>
+          spans.map((s) =>
+            s.text_content === targetSpan.text_content ? { ...s, decision } : s
+          )
+        );
+
+        // Add all to history (for undo) — tagged with a groupId so undo pops the whole batch
+        const groupId = `link-${Date.now()}`;
+        setDecisionHistory((h) => [
+          ...h,
+          ...results.map((result, i) => ({
+            decisionId: result.id,
+            spanType: 'detector' as const,
+            spanId: linkedSpans[i].id,
+            decision,
+            groupId: linkedSpans.length > 1 ? groupId : undefined,
+          })),
+        ]);
       } finally {
         setSubmitting((s) => {
           const next = new Set(s);
-          next.delete(key);
+          keys.forEach((k) => next.delete(k));
           return next;
         });
       }
     },
-    [submitting]
+    [submitting, detectorSpans]
   );
 
   const handleRiskFlagAction = useCallback(
@@ -146,27 +348,41 @@ function App() {
   const handleUndo = useCallback(async () => {
     if (decisionHistory.length === 0) return;
 
-    const lastDecision = decisionHistory[decisionHistory.length - 1];
-    try {
-      await deleteDecision(DOCUMENT_ID, lastDecision.decisionId);
+    const lastEntry = decisionHistory[decisionHistory.length - 1];
 
-      // Revert UI state
-      if (lastDecision.spanType === 'detector') {
+    // Collect all entries in the same group (linked decisions must be undone together)
+    const groupEntries = lastEntry.groupId
+      ? decisionHistory.filter((e) => e.groupId === lastEntry.groupId)
+      : [lastEntry];
+
+    try {
+      // Delete all decisions in the group
+      await Promise.all(
+        groupEntries.map((e) => deleteDecision(DOCUMENT_ID, e.decisionId))
+      );
+
+      // Revert UI state for each entry
+      const detectorIds = new Set(groupEntries.filter((e) => e.spanType === 'detector').map((e) => e.spanId));
+      const riskIds = new Set(groupEntries.filter((e) => e.spanType === 'risk_flag').map((e) => e.spanId));
+
+      if (detectorIds.size > 0) {
         setDetectorSpans((spans) =>
-          spans.map((s) =>
-            s.id === lastDecision.spanId ? { ...s, decision: null } : s
-          )
+          spans.map((s) => (detectorIds.has(s.id) ? { ...s, decision: null } : s))
         );
-      } else {
+      }
+      if (riskIds.size > 0) {
         setRiskFlags((flags) =>
-          flags.map((f) =>
-            f.id === lastDecision.spanId ? { ...f, decision: null } : f
-          )
+          flags.map((f) => (riskIds.has(f.id) ? { ...f, decision: null } : f))
         );
       }
 
-      // Remove from history
-      setDecisionHistory((h) => h.slice(0, -1));
+      // Remove the whole group from history
+      const groupIdToRemove = lastEntry.groupId;
+      setDecisionHistory((h) =>
+        groupIdToRemove
+          ? h.filter((e) => e.groupId !== groupIdToRemove)
+          : h.slice(0, -1)
+      );
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Failed to undo');
     }
@@ -196,7 +412,12 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <h1>Conseal Review</h1>
+        <div className="header-left">
+          <button className="btn-back" onClick={onBack} title="Back to document picker">
+            ← Back
+          </button>
+          <h1>Conseal Review</h1>
+        </div>
         <span className="header-status">{document.title}</span>
       </header>
 
@@ -273,20 +494,35 @@ function App() {
               </>
             )}
 
-            {/* Detector spans */}
+            {/* Detector spans - deduplicated by text_content */}
             <div className="section-label">Proposed Redactions</div>
-            {detectorSpans.map((span) => (
-              <DetectorSpanCard
-                key={`detector-${span.id}`}
-                span={span}
-                isFocused={focusedItemId === `detector-${span.id}`}
-                isSubmitting={submitting.has(`detector-${span.id}`)}
-                onDecision={handleDetectorDecision}
-                ref={(el) => {
-                  if (el) cardRefs.current.set(`detector-${span.id}`, el);
-                }}
-              />
-            ))}
+            {(() => {
+              // Group spans by text_content, show one card per unique value
+              const seen = new Set<string>();
+              const uniqueSpans: Array<{ span: DetectorSpan; count: number }> = [];
+              detectorSpans.forEach((span) => {
+                if (!seen.has(span.text_content)) {
+                  seen.add(span.text_content);
+                  const count = detectorSpans.filter(
+                    (s) => s.text_content === span.text_content
+                  ).length;
+                  uniqueSpans.push({ span, count });
+                }
+              });
+              return uniqueSpans.map(({ span, count }) => (
+                <DetectorSpanCard
+                  key={`detector-${span.id}`}
+                  span={span}
+                  linkedCount={count}
+                  isFocused={focusedItemId === `detector-${span.id}`}
+                  isSubmitting={submitting.has(`detector-${span.id}`)}
+                  onDecision={handleDetectorDecision}
+                  ref={(el) => {
+                    if (el) cardRefs.current.set(`detector-${span.id}`, el);
+                  }}
+                />
+              ));
+            })()}
           </div>
 
           <div className="sidebar-footer">
@@ -306,7 +542,7 @@ function App() {
         </aside>
       </main>
 
-      {summary && <CompletionSummary summary={summary} />}
+      {summary && <CompletionSummary summary={summary} onBack={onBack} />}
     </div>
   );
 }
@@ -335,6 +571,9 @@ function DocumentViewer({
       text_content: s.text_content,
       decision: s.decision,
       urgency: 'standard' as const,
+      ensemble_sources: s.ensemble_sources,
+      ensemble_agreement_count: s.ensemble_agreement_count,
+      ensemble_conflict_types: s.ensemble_conflict_types,
     })),
     ...riskFlags.map((f) => ({
       type: 'risk_flag' as const,
@@ -345,6 +584,9 @@ function DocumentViewer({
       decision: f.decision,
       pii_category: f.pii_category,
       urgency: getUrgency(f),
+      ensemble_sources: f.ensemble_sources,
+      ensemble_agreement_count: f.ensemble_agreement_count,
+      ensemble_conflict_types: f.ensemble_conflict_types,
     })),
   ].sort((a, b) => a.start_offset - b.start_offset);
 
@@ -363,11 +605,21 @@ function DocumentViewer({
     // The highlighted span
     const itemId = `${span.type === 'detector' ? 'detector' : 'risk'}-${span.id}`;
     const isRiskFlag = span.type === 'risk_flag';
+    // Redacted = detector approved OR risk flag redacted
+    const isRedacted =
+      (span.type === 'detector' && span.decision === 'approve') ||
+      (span.type === 'risk_flag' && span.decision === 'redact');
+    // Released = detector rejected OR risk flag dismissed
+    const isReleased =
+      (span.type === 'detector' && span.decision === 'reject') ||
+      (span.type === 'risk_flag' && span.decision === 'dismiss');
     const classes = [
       'span-highlight',
       isRiskFlag ? 'risk-flag' : 'detector',
       isRiskFlag ? span.urgency : '',
       span.decision ? 'decided' : '',
+      isRedacted ? 'redacted' : '',
+      isReleased ? 'released' : '',
     ]
       .filter(Boolean)
       .join(' ');
@@ -404,33 +656,74 @@ function DocumentViewer({
 // Detector Span Card Component
 interface DetectorSpanCardProps {
   span: DetectorSpan;
+  linkedCount: number;  // Number of occurrences with same text_content
   isFocused: boolean;
   isSubmitting: boolean;
   onDecision: (spanId: number, decision: 'approve' | 'reject') => void;
 }
 
 const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>(
-  ({ span, isFocused, isSubmitting, onDecision }, ref) => {
+  ({ span, linkedCount, isFocused, isSubmitting, onDecision }, ref) => {
     const decided = !!span.decision;
+    const category = inferCategory(span.text_content);
+    const isLinked = linkedCount > 1;
 
     return (
       <div
         ref={ref}
-        className={`review-card detector ${decided ? 'decided' : ''} ${isFocused ? 'focused' : ''}`}
+        className={`review-card detector ${decided ? 'decided' : ''} ${isFocused ? 'focused' : ''} ${isLinked ? 'linked' : ''}`}
       >
         {decided ? (
           <div className="decided-summary">
-            <span className="decided-text">{span.text_content}</span>
+            <span className="category-tag">{category}</span>
+            {isLinked && (
+              <span className="linked-badge" title={`Decision applied to all ${linkedCount} occurrences`}>
+                ×{linkedCount}
+              </span>
+            )}
+            <span className={`decided-text ${span.decision === 'approve' ? 'redacted-text' : ''}`}>
+              {span.text_content}
+            </span>
             <span className={`decision-badge ${span.decision}`}>
-              {span.decision === 'approve' ? 'Kept' : 'Released'}
+              {span.decision === 'approve' ? 'Redacted' : 'Kept Visible'}
             </span>
           </div>
         ) : (
           <>
             <div className="card-header">
+              <span className="category-tag">{category}</span>
               <span className="category-label">Proposed redaction</span>
+              {isLinked && (
+                <span className="linked-badge" title={`Appears ${linkedCount}× — decision applies to all`}>
+                  ×{linkedCount}
+                </span>
+              )}
             </div>
+            
+            {/* Ensemble Metadata */}
+            <div className="ensemble-meta">
+              {span.ensemble_agreement_count && span.ensemble_agreement_count > 1 ? (
+                <span className="ensemble-badge agreement" title={`Detected by: ${span.ensemble_sources?.join(', ')}`}>
+                  ✓ Verified by {span.ensemble_agreement_count} detectors
+                </span>
+              ) : (
+                <span className="ensemble-badge single" title={`Detected by: ${span.ensemble_sources?.join(', ')}`}>
+                  Caught by {span.ensemble_sources?.[0] || 'regex'}
+                </span>
+              )}
+              {span.ensemble_conflict_types && span.ensemble_conflict_types.length > 1 && (
+                <span className="ensemble-badge conflict" title={`Conflicts: ${span.ensemble_conflict_types.join(' vs ')}`}>
+                  ⚠️ Type Mismatch
+                </span>
+              )}
+            </div>
+
             <div className="card-content">{span.text_content}</div>
+            {isLinked && (
+              <div className="linked-note">
+                Applies to {linkedCount} occurrences in document
+              </div>
+            )}
             <div className="card-actions">
               <button
                 className="btn btn-approve"
@@ -478,7 +771,9 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
             <span className={`urgency-badge ${urgency}`}>
               {urgency === 'critical' ? 'High' : 'Review'}
             </span>
-            <span className="decided-text">{flag.text_content}</span>
+            <span className={`decided-text ${flag.decision === 'redact' ? 'redacted-text' : ''}`}>
+              {flag.text_content}
+            </span>
             <span className={`decision-badge ${flag.decision}`}>
               {flag.decision === 'redact' ? 'Redacted' : 'Dismissed'}
             </span>
@@ -493,6 +788,25 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
                 Potential {flag.pii_category.toUpperCase()}
               </span>
             </div>
+            
+            {/* Ensemble Metadata */}
+            <div className="ensemble-meta">
+              {flag.ensemble_agreement_count && flag.ensemble_agreement_count > 1 ? (
+                <span className="ensemble-badge agreement" title={`Detected by: ${flag.ensemble_sources?.join(', ')}`}>
+                  ✓ Verified by {flag.ensemble_agreement_count} detectors
+                </span>
+              ) : (
+                <span className="ensemble-badge single" title={`Detected by: ${flag.ensemble_sources?.join(', ')}`}>
+                  Caught by {flag.ensemble_sources?.[0] || 'regex'}
+                </span>
+              )}
+              {flag.ensemble_conflict_types && flag.ensemble_conflict_types.length > 1 && (
+                <span className="ensemble-badge conflict" title={`Conflicts: ${flag.ensemble_conflict_types.join(' vs ')}`}>
+                  ⚠️ Type Mismatch
+                </span>
+              )}
+            </div>
+
             <div className="card-content">{flag.text_content}</div>
 
             {isStaged && (
@@ -537,9 +851,10 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
 // Completion Summary Component
 interface CompletionSummaryProps {
   summary: Summary;
+  onBack: () => void;
 }
 
-function CompletionSummary({ summary }: CompletionSummaryProps) {
+function CompletionSummary({ summary, onBack }: CompletionSummaryProps) {
   const handleRestart = () => {
     window.location.reload();
   };
@@ -571,9 +886,14 @@ function CompletionSummary({ summary }: CompletionSummaryProps) {
             ? 'Great work! You caught all the PII exposures the detector missed.'
             : `${summary.exposures_missed} potential PII exposure${summary.exposures_missed > 1 ? 's were' : ' was'} left unaddressed.`}
         </div>
-        <button className="btn-restart" onClick={handleRestart}>
-          Review Again
-        </button>
+        <div className="summary-actions">
+          <button className="btn-restart" onClick={handleRestart}>
+            Review Again
+          </button>
+          <button className="btn-back-to-picker" onClick={onBack}>
+            ← Choose Another Document
+          </button>
+        </div>
       </div>
     </div>
   );
