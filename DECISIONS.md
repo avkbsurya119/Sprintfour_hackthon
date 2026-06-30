@@ -143,3 +143,120 @@ Architectural and UX decisions made during the 8-hour hackathon build.
 **Tradeoffs:** Less "direct manipulation" than inline popovers, but faster to build and less cluttered.
 
 ---
+
+# Tier 1: Code Quality & Edge Cases
+
+## 11. Double-Click Protection: Per-Item Submitting State
+
+**Decision:** Track submitting state per item (`Set<string>`) rather than global loading state.
+
+**Alternatives considered:**
+- Global isLoading boolean
+- Disable all buttons during any submission
+
+**Why this choice:** Per-item tracking allows parallel submissions and only disables the specific item being submitted. Better UX for rapid review sessions.
+
+**Tradeoffs:** Slightly more complex state management, but prevents accidental duplicate submissions without blocking other items.
+
+---
+
+## 12. Decided Cards: Collapsed Single-Line View
+
+**Decision:** Once a decision is made, the card collapses to a single line showing text + badge.
+
+**Alternatives considered:**
+- Keep full card layout with disabled buttons
+- Hide decided cards entirely
+
+**Why this choice:** Collapsed cards reduce visual noise and let the reviewer focus on remaining items while maintaining visibility of what's been decided.
+
+**Tradeoffs:** Less detail visible for decided items, but the decision badge provides sufficient context.
+
+---
+
+## 13. API Returns Decision ID
+
+**Decision:** `submitDecision` returns the created decision object including its ID.
+
+**Alternatives considered:**
+- Return void, don't track IDs
+- Separate endpoint to fetch decision IDs
+
+**Why this choice:** Required for undo functionality. The ID is needed to call the DELETE endpoint.
+
+**Tradeoffs:** Slightly larger response payloads, but enables undo without additional API calls.
+
+---
+
+## 14. Undo: Frontend History Stack
+
+**Decision:** Track decision history in React state as a stack of `{decisionId, spanType, spanId, decision}`.
+
+**Alternatives considered:**
+- Server-side undo with audit log
+- No undo functionality
+
+**Why this choice:** Simple stack-based undo covers the most common case (immediately correcting a misclick). Full audit trail is out of scope for demo.
+
+**Tradeoffs:** History lost on page refresh, but acceptable for demo scope.
+
+---
+
+## 15. Two-Step Dismissal: Deliberate Pause
+
+**Decision:** Dismissing a risk flag requires two clicks (stage → confirm) to add deliberate friction to potentially dangerous decisions.
+
+**Alternatives considered:**
+- Single-click dismiss with confirmation modal
+- Time-delay before dismiss button becomes active
+
+**Why this choice:** Staged state is visible inline without modal interruption. The visual change (dashed border, warning text) signals "you're about to dismiss a risk flag" without blocking workflow.
+
+**Tradeoffs:** Extra click for legitimate dismissals, but the asymmetric cost model justifies friction on dangerous actions.
+
+---
+
+# Tier 2: Visual Polish & Features
+
+## 16. Enhanced Urgency Tiers: Left Accent Borders
+
+**Decision:** Critical and elevated risk flags have left accent borders (5px/4px) plus subtle shadows.
+
+**Alternatives considered:**
+- Top border accent
+- Icon-based urgency indicators
+
+**Why this choice:** Left border creates strong visual hierarchy in the sidebar list. Shadow adds depth without overwhelming the card.
+
+**Tradeoffs:** More prominent styling, but urgency tiers should be visually distinct.
+
+---
+
+## 17. Critical Risk Pulse Animation
+
+**Decision:** Undecided critical risk flags have a subtle pulse animation on their box-shadow.
+
+**Alternatives considered:**
+- No animation
+- Border color pulse
+- Icon animation
+
+**Why this choice:** Draws attention to highest-priority items without being distracting. Animation stops once decided.
+
+**Tradeoffs:** Could be seen as excessive, but critical items warrant visual emphasis.
+
+---
+
+## 18. Undo Button: Conditional Display
+
+**Decision:** Undo button only appears when there's at least one decision to undo.
+
+**Alternatives considered:**
+- Always show disabled undo button
+- Undo as a link instead of button
+
+**Why this choice:** Cleaner footer when no undo is available. Reduces visual noise at start of review.
+
+**Tradeoffs:** Button appearance shifts layout slightly, but the change is minor.
+
+---
