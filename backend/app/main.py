@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
@@ -13,7 +13,16 @@ from app.schemas import (
     DecisionCreate,
     DecisionResponse,
     SummaryResponse,
+    UploadResponse,
+    DocumentListItem,
 )
+from app.extractor import extract_text, ExtractionError
+from app.risk_scorer import find_potential_pii, PHONE_PATTERN, SSN_PATTERN, EMAIL_PATTERN, NAME_PATTERN, POSTAL_PATTERN
+from app.ensemble import run_ensemble, apply_ensemble_metadata
+
+# DEMO_DOCUMENT_ID is the seeded demo document — never deleted, never re-scanned.
+# Uploaded documents get IDs > 1 and are processed via Option D confidence-tier split.
+DEMO_DOCUMENT_ID = 1
 
 # Create tables on startup
 Base.metadata.create_all(bind=engine)
@@ -37,6 +46,131 @@ app.add_middleware(
 @app.get("/")
 def root():
     return {"status": "ok", "service": "Conseal Correction Review API"}
+
+
+@app.get("/api/documents", response_model=List[DocumentListItem])
+def list_documents(db: Session = Depends(get_db)):
+    """List all documents (demo + uploaded), ordered by creation time."""
+    docs = db.query(Document).order_by(Document.id).all()
+    return [
+        DocumentListItem(
+            id=doc.id,
+            title=doc.title,
+            status=doc.status,
+            created_at=doc.created_at,
+            is_demo=(doc.id == DEMO_DOCUMENT_ID),
+        )
+        for doc in docs
+    ]
+
+
+@app.post("/api/documents/upload", response_model=UploadResponse, status_code=201)
+async def upload_document(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """
+    Upload a PDF or .docx document for PII review.
+
+    Uses Option D confidence-tier split for detector spans vs risk flags:
+    - High-confidence patterns (SSN, email, phone regex) → DetectorSpan rows
+      (shown as "Proposed Redactions" — machine is confident)
+    - Lower-confidence heuristics (name pattern) → RiskFlag rows
+      (shown as "Potential Risk" — needs human judgment)
+
+    No ground truth is stored for uploaded documents — compute_summary
+    handles this gracefully by returning zeros for GT-dependent metrics.
+    """
+    filename = file.filename or "uploaded_file"
+    content = await file.read()
+
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # --- Extract text ---
+    try:
+        text, file_type = extract_text(filename, content)
+    except ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    # --- Create document row ---
+    title = filename.rsplit('.', 1)[0]  # strip extension
+    doc = Document(
+        title=f"Uploaded: {title}",
+        content=text,
+        status="pending_review"
+    )
+    db.add(doc)
+    db.flush()  # get doc.id
+
+    # --- Option D: scan full text, split by confidence tier ---
+    # Pass empty redacted_ranges — for uploaded docs, nothing is pre-redacted.
+    # HIGH-CONFIDENCE patterns → DetectorSpan
+    detector_spans_added = []
+    detector_ranges = []
+
+    for pattern, category in [
+        (SSN_PATTERN, 'ssn'),
+        (EMAIL_PATTERN, 'email'),
+        (PHONE_PATTERN, 'phone'),
+        (POSTAL_PATTERN, 'postal_code'),
+    ]:
+        for match in pattern.finditer(text):
+            # Avoid overlapping spans (e.g. SSN pattern subset of phone pattern)
+            start, end = match.start(), match.end()
+            overlaps = any(
+                not (end <= rs or start >= re)
+                for rs, re in detector_ranges
+            )
+            if overlaps:
+                continue
+            span = DetectorSpan(
+                document_id=doc.id,
+                start_offset=start,
+                end_offset=end,
+                text_content=match.group()
+            )
+            db.add(span)
+            detector_spans_added.append(span)
+            detector_ranges.append((start, end))
+
+    # LOWER-CONFIDENCE heuristic → RiskFlag (elevated urgency)
+    risk_flags_added = []
+    for match in NAME_PATTERN.finditer(text):
+        start, end = match.start(), match.end()
+        # Skip if already covered by a high-confidence detector span
+        overlaps = any(
+            not (end <= rs or start >= re)
+            for rs, re in detector_ranges
+        )
+        if overlaps:
+            continue
+        flag = RiskFlag(
+            document_id=doc.id,
+            start_offset=start,
+            end_offset=end,
+            text_content=match.group(),
+            pii_category='name',
+            pattern_source='name_heuristic'
+        )
+        db.add(flag)
+        risk_flags_added.append(flag)
+
+    # ENSEMBLE PASS
+    reconciled_spans = run_ensemble(text)
+    apply_ensemble_metadata(detector_spans_added, reconciled_spans)
+    apply_ensemble_metadata(risk_flags_added, reconciled_spans)
+
+    db.commit()
+
+    return UploadResponse(
+        document_id=doc.id,
+        title=doc.title,
+        detector_span_count=len(detector_spans_added),
+        risk_flag_count=len(risk_flags_added),
+        file_type=file_type,
+        char_count=len(text),
+    )
 
 
 @app.get("/api/documents/{document_id}", response_model=DocumentResponse)
@@ -263,8 +397,12 @@ def compute_summary(document_id: int, db: Session) -> SummaryResponse:
     Compute the risk-framed summary by comparing decisions against ground truth.
 
     This is the only place ground truth is used to evaluate Sam's performance.
+
+    For uploaded documents (no ground truth rows), GT-dependent metrics
+    (exposures_caught, exposures_missed, unnecessary_redactions_fixed,
+    correct_redactions_kept) will be zero. total_reviewed is always accurate.
     """
-    # Get ground truth spans
+    # Get ground truth spans (empty for uploaded documents — that's fine)
     ground_truth = db.query(GroundTruthSpan).filter(
         GroundTruthSpan.document_id == document_id
     ).all()
