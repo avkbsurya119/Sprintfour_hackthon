@@ -28,27 +28,44 @@ Traditional review interfaces treat these errors with the exact same UX priority
 ## Comprehensive Feature List
 
 ### Core UX & "Asymmetric Friction"
-- **Visual Risk Hierarchy:** PII detections are strictly grouped by threat level:
+- **Visual Risk Hierarchy:** PII detections are strictly grouped by threat level.
   - **Critical (Red):** Severe misses like phone numbers and SSNs.
   - **Elevated (Orange):** Moderate misses like names and emails.
   - **Standard (Gray):** Routine, high-confidence proposed redactions.
 - **Two-Step Dismissal Mechanism:** Dismissing a flagged potential risk requires two clicks (Stage to dismiss, then Confirm). This deliberate friction forces the reviewer to pause on potentially dangerous decisions while keeping safe actions fast.
+- **Critical Risk Pulse Animation:** Undecided critical risk flags feature a subtle pulse animation on their box-shadow to draw immediate attention without being overwhelming.
+- **Enhanced Urgency Borders:** Critical and elevated risk flags feature left accent borders (5px and 4px respectively) to create a strong visual hierarchy in the sidebar list.
 - **Risk-Framed Summary Modal:** Upon completion, the reviewer is presented with "exposures caught" and "exposures missed" rather than a gamified accuracy percentage, reinforcing a security-first mindset.
 
+### Advanced Workflow Mechanics
+- **Scroll-to-Sidebar Navigation:** Clicking a highlighted span directly within the document viewer automatically scrolls and focuses the corresponding action card in the sidebar.
+- **Collapsed Single-Line Decided View:** Once a decision is made, the full review card collapses into a compact single-line view showing just the text and a decision badge, reducing visual noise.
+- **Per-Item Submission State:** Double-click protection is implemented on a per-item basis. This allows reviewers to perform parallel submissions rapidly without locking the entire UI globally.
+- **Smart Deduplication:** Repeated instances of the exact same PII string are grouped together. A single reviewer decision automatically propagates to all identical occurrences in the document.
+- **Inline Corrections & Global Reset:** Every decided card features an inline "Reset" button, allowing users to immediately undo a mistaken click. A global "Reset All" master switch is also available for a clean slate.
+
 ### Advanced Detection & Edge-Case Handling
-- **Ensemble Detection System:** The backend utilizes an ensemble approach combining spaCy NER, Microsoft Presidio, and highly specialized Regex fallbacks for maximum coverage.
+- **Confidence-Tier Split System:** Detections are dynamically categorized. High-confidence structural patterns (e.g., SSN, Email) are routed to "Proposed Redactions," while lower-confidence heuristics (e.g., capitalized name pairs) are routed to "Potential Risks."
+- **Ensemble Detection System:** The backend utilizes a robust ensemble approach combining spaCy NER, Microsoft Presidio, and highly specialized Regex fallbacks for maximum coverage.
 - **Enhanced OCR Anomaly Recognition:** Upgraded rule sets specifically target edge cases that standard ML models struggle with, including:
   - Malformed emails lacking TLDs (e.g., `user@company`).
   - ALL CAPS strings often parsed incorrectly (e.g., Indian names and locations).
   - Unstructured usernames, alphanumeric IDs, and isolated percentages.
-- **Smart Deduplication:** Repeated instances of the exact same PII string are grouped together. A single reviewer decision automatically propagates to all identical occurrences in the document.
-
-### Premium Interface & Usability
-- **Modern Landing Page UI:** Incorporates an interactive 3D WebGL Ribbons background (powered by React Bits & OGL) combined with a premium Ice Latte and Mint color palette for a sophisticated product feel.
-- **Inline Corrections:** Every decided card features an inline "Reset" button, allowing users to immediately undo a mistaken click without relying on a rigid chronological undo stack.
-- **Global Reset All:** A master reset function with a safety confirmation prompt allows reviewers to revert all decisions in the document if they need to rethink their redaction strategy.
-- **Manual Span Tagging:** Reviewers can freely highlight any unflagged text in the document viewer and manually assign it a PII category on the fly.
 - **Multi-Format Processing:** Full backend support for parsing and detecting PII within uploaded PDF, DOCX, and TXT files.
+- **Manual Span Tagging:** Reviewers can freely highlight any unflagged text in the document viewer and manually assign it a PII category on the fly.
+
+### Premium Interface
+- **Modern WebGL Landing Page:** Incorporates a beautiful, interactive 3D WebGL Ribbons background (powered by React Bits & OGL) combined with a premium Ice Latte and Mint color palette for a sophisticated product feel.
+- **Styled Plain Text Rendering:** Documents are rendered with deliberate typography (font, line-height, padding) to look professional without the unnecessary complexity of rich text layout engines.
+
+---
+
+## The Demo Document Design
+
+The built-in demo document is a fabricated debt collection demand letter strategically seeded to demonstrate real-world failure modes:
+- **Position-Based Misses:** Standard detectors reliably catch recipient details in the header, but often miss sender info buried in the signature block. The demo simulates this exactly.
+- **Contextually Labeled Decoys:** A case reference number deliberately mimicking a phone number structure tests the reviewer's judgment against pure pattern recognition.
+- **Balanced Workload:** Contains 8 ground truth items, 5 correct redactions, 4 over-redactions, 3 missed PII fields, and 1 decoy, allowing a full walkthrough of all UX features in under 3 minutes.
 
 ---
 
@@ -104,17 +121,6 @@ npm run dev
 - **Backend:** FastAPI + SQLite (Zero-configuration persistence)
 - **Frontend:** React + TypeScript + Vite (Optimized for speed and HMR)
 - **Risk Scorer:** A multi-layered detection pipeline designed to act as a second-pass scanner, specifically catching PII that the primary detection pass missed.
-
----
-
-## The Demo Document
-
-You can try out the built-in demo document upon launching the app. It is a fabricated debt collection demand letter strategically seeded with:
-- **8** ground truth PII items
-- **5** correct redactions (the detector succeeded)
-- **4** over-redactions (the detector threw a false positive)
-- **3** missed PII fields (detector false negatives, accurately caught by the risk scorer)
-- **1** decoy item (a case reference number deliberately mimicking a phone number structure)
 
 ---
 
