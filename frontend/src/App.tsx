@@ -7,7 +7,17 @@ import {
   completeReview,
   deleteDecision,
   uploadDocument,
+  sanitizeDocument,
+  createManualSpan,
+  updateSpanCategory,
+  deleteSpan,
 } from './api';
+import type {
+  SanitizationMode,
+  RedactionStyle,
+  SanitizeResponse,
+  PIICategory,
+} from './types';
 import type {
   Document,
   DetectorSpan,
@@ -17,6 +27,32 @@ import type {
 } from './types';
 
 const DEMO_DOCUMENT_ID = 1;
+
+// Available PII categories for manual tagging
+const PII_CATEGORIES: { value: PIICategory; label: string }[] = [
+  { value: 'name', label: 'Name' },
+  { value: 'email', label: 'Email' },
+  { value: 'phone', label: 'Phone' },
+  { value: 'ssn', label: 'SSN' },
+  { value: 'credit_card', label: 'Credit Card' },
+  { value: 'location', label: 'Location' },
+  { value: 'organization', label: 'Organization' },
+  { value: 'date', label: 'Date' },
+  { value: 'postal_code', label: 'Postal Code' },
+  { value: 'url', label: 'URL' },
+  { value: 'username', label: 'Username' },
+  { value: 'id_number', label: 'ID Number' },
+  { value: 'ip_address', label: 'IP Address' },
+  { value: 'money', label: 'Money' },
+];
+
+// Text selection state for manual PII marking
+interface TextSelection {
+  start: number;
+  end: number;
+  text: string;
+  rect: DOMRect;
+}
 
 function App() {
   const [activeDocumentId, setActiveDocumentId] = useState<number | null>(null);
@@ -29,12 +65,34 @@ function App() {
 }
 
 function getUrgency(flag: RiskFlag): 'critical' | 'elevated' {
-  return flag.pii_category === 'phone' || flag.pii_category === 'ssn'
+  // Critical: highly sensitive PII that could enable identity theft or fraud
+  const criticalCategories = ['ssn', 'phone', 'credit_card', 'ip_address'];
+  return criticalCategories.includes(flag.pii_category)
     ? 'critical'
     : 'elevated';
 }
 
-// Infer category label from text content for detector spans
+// Get urgency for detector spans based on PII category
+function getDetectorUrgency(span: DetectorSpan): 'critical' | 'elevated' | 'standard' {
+  if (!span.pii_category) return 'standard';
+  const criticalCategories = ['ssn', 'credit_card'];
+  const elevatedCategories = ['phone', 'email', 'ip_address'];
+  if (criticalCategories.includes(span.pii_category)) return 'critical';
+  if (elevatedCategories.includes(span.pii_category)) return 'elevated';
+  return 'standard';
+}
+
+// Get category label for detector spans - use pii_category if available, else infer
+function getCategoryLabel(span: DetectorSpan): string {
+  // Use the detected category if available
+  if (span.pii_category) {
+    return span.pii_category.toUpperCase().replace('_', ' ');
+  }
+  // Fall back to inference for legacy data
+  return inferCategory(span.text_content);
+}
+
+// Infer category label from text content (fallback for legacy data)
 function inferCategory(text: string): string {
   const trimmed = text.trim();
 
@@ -215,8 +273,11 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [submitting, setSubmitting] = useState<Set<string>>(new Set());
   const [decisionHistory, setDecisionHistory] = useState<DecisionHistoryEntry[]>([]);
+  const [textSelection, setTextSelection] = useState<TextSelection | null>(null);
+  const [editingSpan, setEditingSpan] = useState<{ type: 'detector' | 'risk_flag'; id: number } | null>(null);
 
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const documentTextRef = useRef<HTMLDivElement>(null);
 
   // Load data
   useEffect(() => {
@@ -396,6 +457,132 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
     }
   }, []);
 
+  // Handle text selection for manual PII marking
+  const handleTextSelection = useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !documentTextRef.current) {
+      setTextSelection(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const selectedText = selection.toString().trim();
+    if (!selectedText) {
+      setTextSelection(null);
+      return;
+    }
+
+    // Calculate character offsets from document content
+    const docText = documentTextRef.current;
+    const preCaretRange = range.cloneRange();
+    preCaretRange.selectNodeContents(docText);
+    preCaretRange.setEnd(range.startContainer, range.startOffset);
+    const startOffset = preCaretRange.toString().length;
+    const endOffset = startOffset + selection.toString().length;
+
+    // Get position for toolbar
+    const rect = range.getBoundingClientRect();
+
+    setTextSelection({
+      start: startOffset,
+      end: endOffset,
+      text: selectedText,
+      rect,
+    });
+  }, []);
+
+  // Create manual span
+  const handleCreateManualSpan = useCallback(
+    async (category: PIICategory) => {
+      if (!textSelection) return;
+
+      try {
+        const result = await createManualSpan(DOCUMENT_ID, {
+          start_offset: textSelection.start,
+          end_offset: textSelection.end,
+          pii_category: category,
+          span_type: 'detector',
+        });
+
+        // Add the new span to the list
+        const newSpan: DetectorSpan = {
+          id: result.id,
+          start_offset: result.start_offset,
+          end_offset: result.end_offset,
+          text_content: result.text_content,
+          pii_category: result.pii_category,
+          confidence_score: 100,
+          is_manual: true,
+          decision: null,
+          ensemble_sources: ['manual'],
+          ensemble_agreement_count: 1,
+        };
+
+        setDetectorSpans((spans) => [...spans, newSpan].sort((a, b) => a.start_offset - b.start_offset));
+        setTextSelection(null);
+        window.getSelection()?.removeAllRanges();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Failed to create span');
+      }
+    },
+    [textSelection, DOCUMENT_ID]
+  );
+
+  // Update span category
+  const handleUpdateSpanCategory = useCallback(
+    async (spanType: 'detector' | 'risk_flag', spanId: number, newCategory: string) => {
+      try {
+        await updateSpanCategory(DOCUMENT_ID, spanType, spanId, newCategory);
+
+        if (spanType === 'detector') {
+          setDetectorSpans((spans) =>
+            spans.map((s) => (s.id === spanId ? { ...s, pii_category: newCategory } : s))
+          );
+        } else {
+          setRiskFlags((flags) =>
+            flags.map((f) => (f.id === spanId ? { ...f, pii_category: newCategory } : f))
+          );
+        }
+        setEditingSpan(null);
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Failed to update category');
+      }
+    },
+    [DOCUMENT_ID]
+  );
+
+  // Delete span
+  const handleDeleteSpan = useCallback(
+    async (spanType: 'detector' | 'risk_flag', spanId: number) => {
+      if (!confirm('Are you sure you want to remove this detection?')) return;
+
+      try {
+        await deleteSpan(DOCUMENT_ID, spanType, spanId);
+
+        if (spanType === 'detector') {
+          setDetectorSpans((spans) => spans.filter((s) => s.id !== spanId));
+        } else {
+          setRiskFlags((flags) => flags.filter((f) => f.id !== spanId));
+        }
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Failed to delete span');
+      }
+    },
+    [DOCUMENT_ID]
+  );
+
+  // Clear selection when clicking elsewhere
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest('.selection-toolbar') && !target.closest('.document-text')) {
+        setTextSelection(null);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   // Progress calculations
   const totalItems = detectorSpans.length + riskFlags.length;
   const decidedItems =
@@ -427,6 +614,14 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           detectorSpans={detectorSpans}
           riskFlags={riskFlags}
           onSpanClick={handleSpanClick}
+          onTextSelection={handleTextSelection}
+          textSelection={textSelection}
+          onCreateManualSpan={handleCreateManualSpan}
+          onDeleteSpan={handleDeleteSpan}
+          editingSpan={editingSpan}
+          onEditSpan={setEditingSpan}
+          onUpdateCategory={handleUpdateSpanCategory}
+          documentTextRef={documentTextRef}
         />
 
         <aside className="review-sidebar">
@@ -542,7 +737,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         </aside>
       </main>
 
-      {summary && <CompletionSummary summary={summary} onBack={onBack} />}
+      {summary && <CompletionSummary summary={summary} documentId={DOCUMENT_ID} onBack={onBack} />}
     </div>
   );
 }
@@ -553,6 +748,14 @@ interface DocumentViewerProps {
   detectorSpans: DetectorSpan[];
   riskFlags: RiskFlag[];
   onSpanClick: (itemId: string) => void;
+  onTextSelection: () => void;
+  textSelection: TextSelection | null;
+  onCreateManualSpan: (category: PIICategory) => void;
+  onDeleteSpan: (spanType: 'detector' | 'risk_flag', spanId: number) => void;
+  editingSpan: { type: 'detector' | 'risk_flag'; id: number } | null;
+  onEditSpan: (span: { type: 'detector' | 'risk_flag'; id: number } | null) => void;
+  onUpdateCategory: (spanType: 'detector' | 'risk_flag', spanId: number, category: string) => void;
+  documentTextRef: React.RefObject<HTMLDivElement>;
 }
 
 function DocumentViewer({
@@ -560,6 +763,14 @@ function DocumentViewer({
   detectorSpans,
   riskFlags,
   onSpanClick,
+  onTextSelection,
+  textSelection,
+  onCreateManualSpan,
+  onDeleteSpan,
+  editingSpan,
+  onEditSpan,
+  onUpdateCategory,
+  documentTextRef,
 }: DocumentViewerProps) {
   // Build list of all spans sorted by position
   const allSpans: ReviewableItem[] = [
@@ -570,7 +781,10 @@ function DocumentViewer({
       end_offset: s.end_offset,
       text_content: s.text_content,
       decision: s.decision,
-      urgency: 'standard' as const,
+      pii_category: s.pii_category,
+      confidence_score: s.confidence_score,
+      is_manual: s.is_manual,
+      urgency: getDetectorUrgency(s),
       ensemble_sources: s.ensemble_sources,
       ensemble_agreement_count: s.ensemble_agreement_count,
       ensemble_conflict_types: s.ensemble_conflict_types,
@@ -583,6 +797,8 @@ function DocumentViewer({
       text_content: f.text_content,
       decision: f.decision,
       pii_category: f.pii_category,
+      confidence_score: f.confidence_score,
+      is_manual: f.is_manual,
       urgency: getUrgency(f),
       ensemble_sources: f.ensemble_sources,
       ensemble_agreement_count: f.ensemble_agreement_count,
@@ -646,9 +862,85 @@ function DocumentViewer({
   return (
     <div className="document-viewer">
       <div className="document-container">
-        <div className="document-title">Document Preview</div>
-        <div className="document-text">{elements}</div>
+        <div className="document-title">
+          Document Preview
+          <span className="document-hint">Select text to mark as PII</span>
+        </div>
+        <div
+          ref={documentTextRef}
+          className="document-text"
+          onMouseUp={onTextSelection}
+        >
+          {elements}
+        </div>
       </div>
+
+      {/* Text Selection Toolbar */}
+      {textSelection && (
+        <TextSelectionToolbar
+          selection={textSelection}
+          onSelectCategory={onCreateManualSpan}
+          onClose={() => {
+            window.getSelection()?.removeAllRanges();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Text Selection Toolbar Component
+interface TextSelectionToolbarProps {
+  selection: TextSelection;
+  onSelectCategory: (category: PIICategory) => void;
+  onClose: () => void;
+}
+
+function TextSelectionToolbar({ selection, onSelectCategory, onClose }: TextSelectionToolbarProps) {
+  const [showCategories, setShowCategories] = useState(false);
+
+  // Position the toolbar above the selection
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    top: selection.rect.top - 48,
+    left: Math.max(10, selection.rect.left + selection.rect.width / 2 - 100),
+    zIndex: 1000,
+  };
+
+  return (
+    <div className="selection-toolbar" style={style}>
+      {!showCategories ? (
+        <>
+          <span className="selection-text">"{selection.text.slice(0, 20)}{selection.text.length > 20 ? '...' : ''}"</span>
+          <button
+            className="btn-mark-pii"
+            onClick={() => setShowCategories(true)}
+          >
+            Mark as PII
+          </button>
+        </>
+      ) : (
+        <div className="category-selector">
+          <div className="category-header">
+            <span>Select PII Type:</span>
+            <button className="btn-close-categories" onClick={() => setShowCategories(false)}>×</button>
+          </div>
+          <div className="category-grid">
+            {PII_CATEGORIES.map((cat) => (
+              <button
+                key={cat.value}
+                className="category-btn"
+                onClick={() => {
+                  onSelectCategory(cat.value);
+                  onClose();
+                }}
+              >
+                {cat.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -665,8 +957,9 @@ interface DetectorSpanCardProps {
 const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>(
   ({ span, linkedCount, isFocused, isSubmitting, onDecision }, ref) => {
     const decided = !!span.decision;
-    const category = inferCategory(span.text_content);
+    const category = getCategoryLabel(span);
     const isLinked = linkedCount > 1;
+    const confidence = span.confidence_score;
 
     return (
       <div
@@ -702,13 +995,25 @@ const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>
             
             {/* Ensemble Metadata */}
             <div className="ensemble-meta">
-              {span.ensemble_agreement_count && span.ensemble_agreement_count > 1 ? (
+              {span.is_manual ? (
+                <span className="ensemble-badge manual" title="Manually added by reviewer">
+                  ✎ Manually Added
+                </span>
+              ) : span.ensemble_agreement_count && span.ensemble_agreement_count > 1 ? (
                 <span className="ensemble-badge agreement" title={`Detected by: ${span.ensemble_sources?.join(', ')}`}>
                   ✓ Verified by {span.ensemble_agreement_count} detectors
                 </span>
               ) : (
                 <span className="ensemble-badge single" title={`Detected by: ${span.ensemble_sources?.join(', ')}`}>
                   Caught by {span.ensemble_sources?.[0] || 'regex'}
+                </span>
+              )}
+              {confidence !== undefined && !span.is_manual && (
+                <span
+                  className={`ensemble-badge confidence ${confidence >= 80 ? 'high' : confidence >= 60 ? 'medium' : 'low'}`}
+                  title={`Confidence: ${confidence}%`}
+                >
+                  {confidence}% conf
                 </span>
               )}
               {span.ensemble_conflict_types && span.ensemble_conflict_types.length > 1 && (
@@ -760,6 +1065,7 @@ interface RiskFlagCardProps {
 const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
   ({ flag, urgency, isStaged, isFocused, isSubmitting, onAction }, ref) => {
     const decided = !!flag.decision;
+    const confidence = flag.confidence_score;
 
     return (
       <div
@@ -791,13 +1097,25 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
             
             {/* Ensemble Metadata */}
             <div className="ensemble-meta">
-              {flag.ensemble_agreement_count && flag.ensemble_agreement_count > 1 ? (
+              {flag.is_manual ? (
+                <span className="ensemble-badge manual" title="Manually added by reviewer">
+                  ✎ Manually Added
+                </span>
+              ) : flag.ensemble_agreement_count && flag.ensemble_agreement_count > 1 ? (
                 <span className="ensemble-badge agreement" title={`Detected by: ${flag.ensemble_sources?.join(', ')}`}>
                   ✓ Verified by {flag.ensemble_agreement_count} detectors
                 </span>
               ) : (
                 <span className="ensemble-badge single" title={`Detected by: ${flag.ensemble_sources?.join(', ')}`}>
                   Caught by {flag.ensemble_sources?.[0] || 'regex'}
+                </span>
+              )}
+              {confidence !== undefined && !flag.is_manual && (
+                <span
+                  className={`ensemble-badge confidence ${confidence >= 80 ? 'high' : confidence >= 60 ? 'medium' : 'low'}`}
+                  title={`Confidence: ${confidence}%`}
+                >
+                  {confidence}% conf
                 </span>
               )}
               {flag.ensemble_conflict_types && flag.ensemble_conflict_types.length > 1 && (
@@ -848,13 +1166,191 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
   }
 );
 
+// Sanitization Panel Component
+interface SanitizationPanelProps {
+  documentId: number;
+}
+
+function SanitizationPanel({ documentId }: SanitizationPanelProps) {
+  const [mode, setMode] = useState<SanitizationMode>('redact');
+  const [redactionStyle, setRedactionStyle] = useState<RedactionStyle>('bars');
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [result, setResult] = useState<SanitizeResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSanitize = async () => {
+    setIsProcessing(true);
+    setError(null);
+    try {
+      const response = await sanitizeDocument(documentId, {
+        mode,
+        redaction_style: mode === 'redact' ? redactionStyle : undefined,
+      });
+      setResult(response);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sanitization failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDownload = () => {
+    if (!result) return;
+    const blob = new Blob([result.content], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `sanitized_document_${documentId}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCopyToClipboard = () => {
+    if (!result) return;
+    navigator.clipboard.writeText(result.content);
+  };
+
+  return (
+    <div className="sanitization-panel">
+      <h3>Export Sanitized Document</h3>
+
+      {!result ? (
+        <>
+          <div className="sanitization-options">
+            <div className="option-group">
+              <label>Sanitization Mode</label>
+              <div className="radio-group">
+                <label className={`radio-option ${mode === 'redact' ? 'selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value="redact"
+                    checked={mode === 'redact'}
+                    onChange={() => setMode('redact')}
+                  />
+                  <span className="radio-label">
+                    <strong>Redact</strong>
+                    <span className="radio-desc">Replace PII with ████ or [REDACTED]</span>
+                  </span>
+                </label>
+                <label className={`radio-option ${mode === 'pseudonymize' ? 'selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="mode"
+                    value="pseudonymize"
+                    checked={mode === 'pseudonymize'}
+                    onChange={() => setMode('pseudonymize')}
+                  />
+                  <span className="radio-label">
+                    <strong>Pseudonymize</strong>
+                    <span className="radio-desc">Replace with consistent labels (PERSON_1, EMAIL_1)</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            {mode === 'redact' && (
+              <div className="option-group">
+                <label>Redaction Style</label>
+                <div className="radio-group">
+                  <label className={`radio-option ${redactionStyle === 'bars' ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="style"
+                      value="bars"
+                      checked={redactionStyle === 'bars'}
+                      onChange={() => setRedactionStyle('bars')}
+                    />
+                    <span className="radio-label">
+                      <strong>Black Bars</strong>
+                      <span className="radio-desc">████████████</span>
+                    </span>
+                  </label>
+                  <label className={`radio-option ${redactionStyle === 'brackets' ? 'selected' : ''}`}>
+                    <input
+                      type="radio"
+                      name="style"
+                      value="brackets"
+                      checked={redactionStyle === 'brackets'}
+                      onChange={() => setRedactionStyle('brackets')}
+                    />
+                    <span className="radio-label">
+                      <strong>Brackets</strong>
+                      <span className="radio-desc">[REDACTED]</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            className="btn-sanitize"
+            onClick={handleSanitize}
+            disabled={isProcessing}
+          >
+            {isProcessing ? 'Processing...' : 'Generate Sanitized Document'}
+          </button>
+
+          {error && <div className="sanitization-error">{error}</div>}
+        </>
+      ) : (
+        <div className="sanitization-result">
+          <div className="result-header">
+            <span className="result-mode">
+              {result.mode === 'redact' ? 'Redacted' : 'Pseudonymized'}
+            </span>
+            <span className="result-count">
+              {result.redaction_count} item{result.redaction_count !== 1 ? 's' : ''} processed
+            </span>
+          </div>
+
+          <div className="result-preview">
+            <pre>{result.content.slice(0, 500)}{result.content.length > 500 ? '...' : ''}</pre>
+          </div>
+
+          {result.mode === 'pseudonymize' && result.pseudonym_mapping && (
+            <div className="pseudonym-mapping">
+              <h4>Pseudonym Mapping</h4>
+              <div className="mapping-table">
+                {Object.entries(result.pseudonym_mapping).map(([original, pseudonym]) => (
+                  <div key={original} className="mapping-row">
+                    <span className="mapping-original">{original}</span>
+                    <span className="mapping-arrow">→</span>
+                    <span className="mapping-pseudonym">{pseudonym}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="result-actions">
+            <button className="btn-download" onClick={handleDownload}>
+              Download
+            </button>
+            <button className="btn-copy" onClick={handleCopyToClipboard}>
+              Copy to Clipboard
+            </button>
+            <button className="btn-regenerate" onClick={() => setResult(null)}>
+              Regenerate
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Completion Summary Component
 interface CompletionSummaryProps {
   summary: Summary;
+  documentId: number;
   onBack: () => void;
 }
 
-function CompletionSummary({ summary, onBack }: CompletionSummaryProps) {
+function CompletionSummary({ summary, documentId, onBack }: CompletionSummaryProps) {
   const handleRestart = () => {
     window.location.reload();
   };
@@ -886,6 +1382,9 @@ function CompletionSummary({ summary, onBack }: CompletionSummaryProps) {
             ? 'Great work! You caught all the PII exposures the detector missed.'
             : `${summary.exposures_missed} potential PII exposure${summary.exposures_missed > 1 ? 's were' : ' was'} left unaddressed.`}
         </div>
+
+        <SanitizationPanel documentId={documentId} />
+
         <div className="summary-actions">
           <button className="btn-restart" onClick={handleRestart}>
             Review Again
