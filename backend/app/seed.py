@@ -38,8 +38,8 @@ Drive, San Francisco, CA 94110.
 
 If payment is not received within thirty days of this notice, we will have no
 choice but to pursue legal remedies, including but not limited to filing suit
-in San Francisco Superior Court. Such action will result in additional legal
-fees and court costs being added to your outstanding balance.
+against Marcus Whitfield in San Francisco Superior Court. Such action will
+result in additional legal fees and court costs being added to your balance.
 
 Please contact our office immediately at Thompson & Reynolds to arrange
 payment. You may reach our collections department at 415-555-0142 or via
@@ -81,28 +81,30 @@ def seed_database():
         db.add(doc)
         db.flush()  # Get the ID
 
-        # === GROUND TRUTH PII (8 items) ===
+        # === GROUND TRUTH PII (9 items) ===
         # These are the actual sensitive items that SHOULD be redacted
+        # Format: (text, category, occurrence)
         ground_truth_items = [
-            # Names (2)
-            ("Marcus Whitfield", "name"),
-            ("Elena Rodriguez", "name"),
+            # Names (3 - Marcus appears twice)
+            ("Marcus Whitfield", "name", 1),
+            ("Marcus Whitfield", "name", 2),
+            ("Elena Rodriguez", "name", 1),
 
             # Phone numbers (2)
-            ("415-867-5309", "phone"),
-            ("415-555-0142", "phone"),
+            ("415-867-5309", "phone", 1),
+            ("415-555-0142", "phone", 1),
 
             # Emails (3)
-            ("marcus.whitfield@techcorp.io", "email"),
-            ("collections@thompsonreynolds.com", "email"),
-            ("elena.rodriguez@thompsonreynolds.com", "email"),
+            ("marcus.whitfield@techcorp.io", "email", 1),
+            ("collections@thompsonreynolds.com", "email", 1),
+            ("elena.rodriguez@thompsonreynolds.com", "email", 1),
 
             # SSN (1)
-            ("987-65-4321", "ssn"),
+            ("987-65-4321", "ssn", 1),
         ]
 
-        for text, category in ground_truth_items:
-            start, end = get_offset(DOCUMENT_CONTENT, text)
+        for text, category, occurrence in ground_truth_items:
+            start, end = get_offset(DOCUMENT_CONTENT, text, occurrence)
             db.add(GroundTruthSpan(
                 document_id=doc.id,
                 start_offset=start,
@@ -113,20 +115,22 @@ def seed_database():
 
         # === DETECTOR OUTPUT (deliberately flawed) ===
         # True positives: detector correctly catches these
+        # Format: (text, occurrence) - occurrence defaults to 1
         detector_catches = [
-            "Marcus Whitfield",           # TP: name
-            "415-555-0142",               # TP: phone
-            "marcus.whitfield@techcorp.io",  # TP: email
-            "collections@thompsonreynolds.com",  # TP: email
-            "987-65-4321",                # TP: SSN
+            ("Marcus Whitfield", 1),      # TP: name (salutation)
+            ("Marcus Whitfield", 2),      # TP: name (legal threat paragraph) - LINKED
+            ("415-555-0142", 1),          # TP: phone
+            ("marcus.whitfield@techcorp.io", 1),  # TP: email
+            ("collections@thompsonreynolds.com", 1),  # TP: email
+            ("987-65-4321", 1),           # TP: SSN
         ]
 
         # False positives: detector wrongly redacts these harmless phrases
         detector_false_positives = [
-            "Apex Financial Services",     # FP: company name, not personal
-            "San Francisco Superior Court",  # FP: court name, not personal
-            "January 15, 2024",            # FP: date, not PII
-            "$12,450.00",                  # FP: amount, not PII
+            ("Apex Financial Services", 1),     # FP: company name, not personal
+            ("San Francisco Superior Court", 1),  # FP: court name, not personal
+            ("January 15, 2024", 1),            # FP: date, not PII
+            ("$12,450.00", 1),                  # FP: amount, not PII
         ]
 
         # Detector MISSES (false negatives) - these are the dangerous ones:
@@ -136,8 +140,8 @@ def seed_database():
 
         all_detector_spans = detector_catches + detector_false_positives
 
-        for text in all_detector_spans:
-            start, end = get_offset(DOCUMENT_CONTENT, text)
+        for text, occurrence in all_detector_spans:
+            start, end = get_offset(DOCUMENT_CONTENT, text, occurrence)
             db.add(DetectorSpan(
                 document_id=doc.id,
                 start_offset=start,
@@ -162,15 +166,27 @@ def seed_database():
         # - "elena.rodriguez@thompsonreynolds.com" (real email - TRUE CATCH)
         # - Possibly "Thompson & Reynolds" (but won't match our name heuristic)
 
+        risk_flags_added = []
         for finding in risk_findings:
-            db.add(RiskFlag(
+            flag = RiskFlag(
                 document_id=doc.id,
                 start_offset=finding['start_offset'],
                 end_offset=finding['end_offset'],
                 text_content=finding['text_content'],
                 pii_category=finding['pii_category'],
                 pattern_source=finding['pattern_source']
-            ))
+            )
+            db.add(flag)
+            risk_flags_added.append(flag)
+
+        # ENSEMBLE PASS
+        from app.ensemble import run_ensemble, apply_ensemble_metadata
+        reconciled_spans = run_ensemble(DOCUMENT_CONTENT)
+        
+        # Detector spans are already in db but we have them as objects in `detector_spans` list from line 156
+        # Wait, the ones generated above might need refreshing or we can just update the ones we queried
+        apply_ensemble_metadata(detector_spans, reconciled_spans)
+        apply_ensemble_metadata(risk_flags_added, reconciled_spans)
 
         db.commit()
 
@@ -195,10 +211,11 @@ def seed_database():
 
         print("\n--- DETECTOR OUTPUT ---")
         print("True Positives (correct catches):")
-        for text in detector_catches:
-            print(f"  [OK] '{text}'")
+        for text, occ in detector_catches:
+            suffix = f" (occurrence {occ})" if occ > 1 else ""
+            print(f"  [OK] '{text}'{suffix}")
         print("False Positives (over-redacted):")
-        for text in detector_false_positives:
+        for text, occ in detector_false_positives:
             print(f"  [FP] '{text}' <- harmless, shouldn't redact")
         print("False Negatives (dangerous misses):")
         print("  [FN] '415-867-5309' <- real phone, MISSED")
