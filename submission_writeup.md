@@ -17,3 +17,8 @@ To ensure my 8-hour hackathon build remained laser-focused on the core interacti
 3. **Rich Text / Complex Document Rendering:** I chose to render the documents as carefully styled plain text rather than building a complex PDF or rich-text layout engine. Clean typography looks professional, and complex layout code would have distracted from the actual review UX.
 4. **Backend State for "Staged" Dismissals:** The intermediate "staged" state for my two-step dismissal lives entirely in the frontend React state. If a user refreshes, the staged state is lost. This kept the API incredibly fast and simple, prioritizing the real-time review experience over rigid audit trails.
 5. **Leaking Ground Truth Data:** I strictly isolated the ground truth data from the frontend during the active review process. I didn't build "hints" or "is_correct" flags into the detector payload because I wanted the reviewer to experience the genuine tension of making judgment calls without knowing the right answer until the final summary screen.
+
+### Deep Dive Documentation
+For a complete breakdown of this project, please refer to the documentation included in the repository:
+- 📖 [**README.md**](./README.md): A high-level overview of the project, core features, and quick-start instructions for running the app locally.
+- 🧠 [**DECISIONS.md**](./DECISIONS.md): A comprehensive, granular log of every single architectural, UX, and design decision made during the hackathon build, including alternative approaches considered and tradeoffs accepted.
