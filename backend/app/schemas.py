@@ -19,6 +19,9 @@ class DetectorSpanResponse(BaseModel):
     start_offset: int
     end_offset: int
     text_content: str
+    pii_category: Optional[str] = None
+    confidence_score: Optional[int] = None
+    is_manual: bool = False
     decision: Optional[str] = None
     ensemble_sources: Optional[List[str]] = None
     ensemble_agreement_count: Optional[int] = None
@@ -35,6 +38,8 @@ class RiskFlagResponse(BaseModel):
     text_content: str
     pii_category: str
     pattern_source: str
+    confidence_score: Optional[int] = None
+    is_manual: bool = False
     decision: Optional[str] = None
     ensemble_sources: Optional[List[str]] = None
     ensemble_agreement_count: Optional[int] = None
@@ -93,3 +98,88 @@ class DocumentListItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ============================================================================
+# Sanitization Schemas
+# ============================================================================
+
+class SanitizeRequest(BaseModel):
+    """Request to sanitize a document."""
+    mode: str  # 'redact' or 'pseudonymize'
+    redaction_style: Optional[str] = 'bars'  # 'bars' (████) or 'brackets' ([REDACTED])
+
+
+class RedactionInfo(BaseModel):
+    """Information about a single redaction."""
+    original: str
+    category: str
+    start: int
+    end: int
+    replacement: str
+
+
+class SanitizeResponse(BaseModel):
+    """Response from sanitization."""
+    document_id: int
+    mode: str
+    content: str  # The sanitized content
+    redaction_count: int
+    redactions: Optional[List[RedactionInfo]] = None  # For redact mode
+    pseudonym_mapping: Optional[dict] = None  # For pseudonymize mode
+    output_id: int  # ID of the saved output for later retrieval
+
+
+class PseudonymMappingResponse(BaseModel):
+    """Response showing pseudonym mappings for a document."""
+    document_id: int
+    mappings: List[dict]  # List of {original, pseudonym, category}
+
+
+class SanitizedOutputResponse(BaseModel):
+    """Response for retrieving a saved sanitized output."""
+    id: int
+    document_id: int
+    mode: str
+    redaction_style: Optional[str]
+    content: str
+    mapping: Optional[dict]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# ============================================================================
+# Manual Span Management Schemas
+# ============================================================================
+
+class ManualSpanCreate(BaseModel):
+    """Request to create a manual PII detection."""
+    start_offset: int
+    end_offset: int
+    pii_category: str
+    span_type: str = 'detector'  # 'detector' or 'risk_flag'
+
+
+class ManualSpanResponse(BaseModel):
+    """Response after creating a manual span."""
+    id: int
+    span_type: str
+    start_offset: int
+    end_offset: int
+    text_content: str
+    pii_category: str
+    is_manual: bool
+
+
+class SpanUpdateRequest(BaseModel):
+    """Request to update a span's PII category."""
+    pii_category: str
+
+
+class SpanDeleteResponse(BaseModel):
+    """Response after deleting a span."""
+    success: bool
+    span_type: str
+    span_id: int
