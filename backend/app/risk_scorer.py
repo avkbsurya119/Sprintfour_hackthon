@@ -10,8 +10,18 @@ review at every layer.
 import re
 from typing import List, Tuple, Set
 
-# Phone: matches common US formats
-PHONE_PATTERN = re.compile(r'\b\d{3}[-.]?\d{3}[-.]?\d{4}\b')
+# Phone: US and Indian formats (mobile/landline) without matching 16-digit accounts or SSNs
+PHONE_PATTERN = re.compile(
+    r'\b(?:'
+    r'(?:\+?1[-.\s]*)?(?:\(\d{3}\)|\d{3})[-.\s]*\d{3}[-.\s]*\d{4}' # US formats
+    r'|(?:\+?91[-.\s]*)?[6-9]\d{4}[-.\s]*\d{5}' # Indian Mobile (5-5)
+    r'|(?:\+?91[-.\s]*)?[6-9]\d{2}[-.\s]*\d{3}[-.\s]*\d{4}' # Indian Mobile (3-3-4)
+    r'|0\d{2,4}[-.\s]+\d{3,4}[-.\s]+\d{3,4}' # Indian Landline
+    r')\b'
+)
+
+# Postal/PIN code: matches 5-digit US Zip, 6-digit PIN, and spaced 6-digit PINs
+POSTAL_PATTERN = re.compile(r'\b(?:\d{5}(?:-\d{4})?|\d{6}|\d{3}\s?\d{3})\b')
 
 # SSN: XXX-XX-XXXX format
 SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
@@ -19,20 +29,8 @@ SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
 # Email: standard email pattern
 EMAIL_PATTERN = re.compile(r'\b[\w.-]+@[\w.-]+\.\w{2,}\b')
 
-# Common first names for name detection heuristic
-COMMON_NAMES = {
-    'james', 'john', 'robert', 'michael', 'william', 'david', 'richard', 'joseph',
-    'thomas', 'charles', 'mary', 'patricia', 'jennifer', 'linda', 'elizabeth',
-    'barbara', 'susan', 'jessica', 'sarah', 'karen', 'margaret', 'alice', 'bob',
-    'carol', 'daniel', 'edward', 'frank', 'george', 'henry', 'ivan', 'jack',
-    'kevin', 'larry', 'mark', 'nancy', 'oliver', 'peter', 'quinn', 'raymond',
-    'steven', 'timothy', 'victor', 'walter', 'xavier', 'zachary', 'angela',
-    'catherine', 'donna', 'emily', 'fiona', 'grace', 'helen', 'irene', 'julia',
-    'marcus', 'elena'  # First names from our document (not surnames)
-}
-
-# Pattern for two consecutive capitalized words (potential name)
-NAME_PATTERN = re.compile(r'\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b')
+# Names: Match 2 to 4 consecutive capitalized words.
+NAME_PATTERN = re.compile(r'\b(?:[A-Z][a-z]+\s+){1,3}[A-Z][a-z]+\b')
 
 
 def find_potential_pii(
@@ -92,17 +90,26 @@ def find_potential_pii(
                 'pattern_source': 'email_regex'
             })
 
-    # Check for names (two capitalized words where first matches common names)
+    # Check for postal/PIN codes
+    for match in POSTAL_PATTERN.finditer(text):
+        if not is_in_redacted_range(match.start(), match.end()):
+            findings.append({
+                'start_offset': match.start(),
+                'end_offset': match.end(),
+                'text_content': match.group(),
+                'pii_category': 'postal_code',
+                'pattern_source': 'postal_regex'
+            })
+
+    # Check for names (2-4 capitalized words)
     for match in NAME_PATTERN.finditer(text):
-        first_name = match.group(1).lower()
-        if first_name in COMMON_NAMES:
-            if not is_in_redacted_range(match.start(), match.end()):
-                findings.append({
-                    'start_offset': match.start(),
-                    'end_offset': match.end(),
-                    'text_content': match.group(),
-                    'pii_category': 'name',
-                    'pattern_source': 'name_heuristic'
-                })
+        if not is_in_redacted_range(match.start(), match.end()):
+            findings.append({
+                'start_offset': match.start(),
+                'end_offset': match.end(),
+                'text_content': match.group(),
+                'pii_category': 'name',
+                'pattern_source': 'name_heuristic'
+            })
 
     return findings
