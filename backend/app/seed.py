@@ -115,22 +115,22 @@ def seed_database():
 
         # === DETECTOR OUTPUT (deliberately flawed) ===
         # True positives: detector correctly catches these
-        # Format: (text, occurrence) - occurrence defaults to 1
+        # Format: (text, category, occurrence) - occurrence defaults to 1
         detector_catches = [
-            ("Marcus Whitfield", 1),      # TP: name (salutation)
-            ("Marcus Whitfield", 2),      # TP: name (legal threat paragraph) - LINKED
-            ("415-555-0142", 1),          # TP: phone
-            ("marcus.whitfield@techcorp.io", 1),  # TP: email
-            ("collections@thompsonreynolds.com", 1),  # TP: email
-            ("987-65-4321", 1),           # TP: SSN
+            ("Marcus Whitfield", "name", 1),      # TP: name (salutation)
+            ("Marcus Whitfield", "name", 2),      # TP: name (legal threat paragraph) - LINKED
+            ("415-555-0142", "phone", 1),          # TP: phone
+            ("marcus.whitfield@techcorp.io", "email", 1),  # TP: email
+            ("collections@thompsonreynolds.com", "email", 1),  # TP: email
+            ("987-65-4321", "ssn", 1),           # TP: SSN
         ]
 
         # False positives: detector wrongly redacts these harmless phrases
         detector_false_positives = [
-            ("Apex Financial Services", 1),     # FP: company name, not personal
-            ("San Francisco Superior Court", 1),  # FP: court name, not personal
-            ("January 15, 2024", 1),            # FP: date, not PII
-            ("$12,450.00", 1),                  # FP: amount, not PII
+            ("Apex Financial Services", "organization", 1),     # FP: company name, not personal
+            ("San Francisco Superior Court", "organization", 1),  # FP: court name, not personal
+            ("January 15, 2024", "date", 1),            # FP: date, not PII
+            ("$12,450.00", "money", 1),                  # FP: amount, not PII
         ]
 
         # Detector MISSES (false negatives) - these are the dangerous ones:
@@ -140,13 +140,15 @@ def seed_database():
 
         all_detector_spans = detector_catches + detector_false_positives
 
-        for text, occurrence in all_detector_spans:
+        for text, category, occurrence in all_detector_spans:
             start, end = get_offset(DOCUMENT_CONTENT, text, occurrence)
             db.add(DetectorSpan(
                 document_id=doc.id,
                 start_offset=start,
                 end_offset=end,
-                text_content=text
+                text_content=text,
+                pii_category=category,
+                is_manual=0
             ))
 
         db.commit()
@@ -174,7 +176,8 @@ def seed_database():
                 end_offset=finding['end_offset'],
                 text_content=finding['text_content'],
                 pii_category=finding['pii_category'],
-                pattern_source=finding['pattern_source']
+                pattern_source=finding['pattern_source'],
+                is_manual=0
             )
             db.add(flag)
             risk_flags_added.append(flag)
@@ -211,12 +214,12 @@ def seed_database():
 
         print("\n--- DETECTOR OUTPUT ---")
         print("True Positives (correct catches):")
-        for text, occ in detector_catches:
+        for text, category, occ in detector_catches:
             suffix = f" (occurrence {occ})" if occ > 1 else ""
-            print(f"  [OK] '{text}'{suffix}")
+            print(f"  [OK] [{category}] '{text}'{suffix}")
         print("False Positives (over-redacted):")
-        for text, occ in detector_false_positives:
-            print(f"  [FP] '{text}' <- harmless, shouldn't redact")
+        for text, category, occ in detector_false_positives:
+            print(f"  [FP] [{category}] '{text}' <- harmless, shouldn't redact")
         print("False Negatives (dangerous misses):")
         print("  [FN] '415-867-5309' <- real phone, MISSED")
         print("  [FN] 'Elena Rodriguez' <- real name, MISSED")
