@@ -31,6 +31,7 @@ function App() {
   const [focusedItemId, setFocusedItemId] = useState<string | null>(null);
   const [stagedDismissals, setStagedDismissals] = useState<Set<number>>(new Set());
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [submitting, setSubmitting] = useState<Set<string>>(new Set());
 
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -54,44 +55,61 @@ function App() {
     loadData();
   }, []);
 
-  // Decision handlers
+  // Decision handlers with double-click protection
   const handleDetectorDecision = useCallback(
     async (spanId: number, decision: 'approve' | 'reject') => {
-      await submitDecision(DOCUMENT_ID, 'detector', spanId, decision);
-      setDetectorSpans((spans) =>
-        spans.map((s) => (s.id === spanId ? { ...s, decision } : s))
-      );
-    },
-    []
-  );
+      const key = `detector-${spanId}`;
+      if (submitting.has(key)) return;
 
-  const handleRiskFlagAction = useCallback(
-    async (flagId: number, action: 'redact' | 'stage' | 'confirm-dismiss') => {
-      if (action === 'redact') {
-        await submitDecision(DOCUMENT_ID, 'risk_flag', flagId, 'redact');
-        setRiskFlags((flags) =>
-          flags.map((f) => (f.id === flagId ? { ...f, decision: 'redact' } : f))
+      setSubmitting((s) => new Set(s).add(key));
+      try {
+        await submitDecision(DOCUMENT_ID, 'detector', spanId, decision);
+        setDetectorSpans((spans) =>
+          spans.map((s) => (s.id === spanId ? { ...s, decision } : s))
         );
-        setStagedDismissals((s) => {
+      } finally {
+        setSubmitting((s) => {
           const next = new Set(s);
-          next.delete(flagId);
-          return next;
-        });
-      } else if (action === 'stage') {
-        setStagedDismissals((s) => new Set(s).add(flagId));
-      } else if (action === 'confirm-dismiss') {
-        await submitDecision(DOCUMENT_ID, 'risk_flag', flagId, 'dismiss');
-        setRiskFlags((flags) =>
-          flags.map((f) => (f.id === flagId ? { ...f, decision: 'dismiss' } : f))
-        );
-        setStagedDismissals((s) => {
-          const next = new Set(s);
-          next.delete(flagId);
+          next.delete(key);
           return next;
         });
       }
     },
-    []
+    [submitting]
+  );
+
+  const handleRiskFlagAction = useCallback(
+    async (flagId: number, action: 'redact' | 'stage' | 'confirm-dismiss') => {
+      if (action === 'stage') {
+        setStagedDismissals((s) => new Set(s).add(flagId));
+        return;
+      }
+
+      const key = `risk-${flagId}`;
+      if (submitting.has(key)) return;
+
+      const decision = action === 'redact' ? 'redact' : 'dismiss';
+
+      setSubmitting((s) => new Set(s).add(key));
+      try {
+        await submitDecision(DOCUMENT_ID, 'risk_flag', flagId, decision);
+        setRiskFlags((flags) =>
+          flags.map((f) => (f.id === flagId ? { ...f, decision } : f))
+        );
+        setStagedDismissals((s) => {
+          const next = new Set(s);
+          next.delete(flagId);
+          return next;
+        });
+      } finally {
+        setSubmitting((s) => {
+          const next = new Set(s);
+          next.delete(key);
+          return next;
+        });
+      }
+    },
+    [submitting]
   );
 
   const handleComplete = useCallback(async () => {
@@ -171,6 +189,7 @@ function App() {
                       urgency="critical"
                       isStaged={stagedDismissals.has(flag.id)}
                       isFocused={focusedItemId === `risk-${flag.id}`}
+                      isSubmitting={submitting.has(`risk-${flag.id}`)}
                       onAction={handleRiskFlagAction}
                       ref={(el) => {
                         if (el) cardRefs.current.set(`risk-${flag.id}`, el);
@@ -193,6 +212,7 @@ function App() {
                       urgency="elevated"
                       isStaged={stagedDismissals.has(flag.id)}
                       isFocused={focusedItemId === `risk-${flag.id}`}
+                      isSubmitting={submitting.has(`risk-${flag.id}`)}
                       onAction={handleRiskFlagAction}
                       ref={(el) => {
                         if (el) cardRefs.current.set(`risk-${flag.id}`, el);
@@ -209,6 +229,7 @@ function App() {
                 key={`detector-${span.id}`}
                 span={span}
                 isFocused={focusedItemId === `detector-${span.id}`}
+                isSubmitting={submitting.has(`detector-${span.id}`)}
                 onDecision={handleDetectorDecision}
                 ref={(el) => {
                   if (el) cardRefs.current.set(`detector-${span.id}`, el);
@@ -328,11 +349,12 @@ function DocumentViewer({
 interface DetectorSpanCardProps {
   span: DetectorSpan;
   isFocused: boolean;
+  isSubmitting: boolean;
   onDecision: (spanId: number, decision: 'approve' | 'reject') => void;
 }
 
 const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>(
-  ({ span, isFocused, onDecision }, ref) => {
+  ({ span, isFocused, isSubmitting, onDecision }, ref) => {
     const decided = !!span.decision;
 
     return (
@@ -352,12 +374,14 @@ const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>
           <div className="card-actions">
             <button
               className="btn btn-approve"
+              disabled={isSubmitting}
               onClick={() => onDecision(span.id, 'approve')}
             >
               Keep Redacted
             </button>
             <button
               className="btn btn-reject"
+              disabled={isSubmitting}
               onClick={() => onDecision(span.id, 'reject')}
             >
               Release
@@ -375,11 +399,12 @@ interface RiskFlagCardProps {
   urgency: 'critical' | 'elevated';
   isStaged: boolean;
   isFocused: boolean;
+  isSubmitting: boolean;
   onAction: (flagId: number, action: 'redact' | 'stage' | 'confirm-dismiss') => void;
 }
 
 const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
-  ({ flag, urgency, isStaged, isFocused, onAction }, ref) => {
+  ({ flag, urgency, isStaged, isFocused, isSubmitting, onAction }, ref) => {
     const decided = !!flag.decision;
 
     return (
@@ -411,6 +436,7 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
           <div className="card-actions">
             <button
               className="btn btn-redact"
+              disabled={isSubmitting}
               onClick={() => onAction(flag.id, 'redact')}
             >
               Redact This
@@ -418,6 +444,7 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
             {isStaged ? (
               <button
                 className="btn btn-confirm-dismiss"
+                disabled={isSubmitting}
                 onClick={() => onAction(flag.id, 'confirm-dismiss')}
               >
                 Confirm Dismiss
@@ -425,6 +452,7 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
             ) : (
               <button
                 className="btn btn-dismiss"
+                disabled={isSubmitting}
                 onClick={() => onAction(flag.id, 'stage')}
               >
                 Dismiss
