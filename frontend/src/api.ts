@@ -1,4 +1,13 @@
-import type { Document, ReviewItems, Summary, SpanType } from './types';
+import type {
+  Document,
+  ReviewItems,
+  Summary,
+  SpanType,
+  SanitizeRequest,
+  SanitizeResponse,
+  SanitizedOutput,
+  PseudonymMapping,
+} from './types';
 
 const API_BASE = 'http://localhost:8000/api';
 
@@ -114,6 +123,121 @@ export async function uploadDocument(file: File): Promise<UploadResult> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
     throw new Error(error.detail || 'Upload failed');
+  }
+  return response.json();
+}
+
+// ============================================================================
+// Sanitization API
+// ============================================================================
+
+export async function sanitizeDocument(
+  documentId: number,
+  request: SanitizeRequest
+): Promise<SanitizeResponse> {
+  const response = await fetch(`${API_BASE}/documents/${documentId}/sanitize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Sanitization failed' }));
+    throw new Error(error.detail || 'Sanitization failed');
+  }
+  return response.json();
+}
+
+export async function getSanitizedOutputs(documentId: number): Promise<SanitizedOutput[]> {
+  const response = await fetch(`${API_BASE}/documents/${documentId}/sanitized-outputs`);
+  if (!response.ok) throw new Error('Failed to fetch sanitized outputs');
+  return response.json();
+}
+
+export async function getSanitizedOutput(
+  documentId: number,
+  outputId: number
+): Promise<SanitizedOutput> {
+  const response = await fetch(`${API_BASE}/documents/${documentId}/sanitized-outputs/${outputId}`);
+  if (!response.ok) throw new Error('Failed to fetch sanitized output');
+  return response.json();
+}
+
+export async function getPseudonymMappings(documentId: number): Promise<PseudonymMapping[]> {
+  const response = await fetch(`${API_BASE}/documents/${documentId}/pseudonym-mappings`);
+  if (!response.ok) throw new Error('Failed to fetch pseudonym mappings');
+  return response.json();
+}
+
+// ============================================================================
+// Manual Span Management API
+// ============================================================================
+
+export interface ManualSpanCreate {
+  start_offset: number;
+  end_offset: number;
+  pii_category: string;
+  span_type?: 'detector' | 'risk_flag';
+}
+
+export interface ManualSpanResponse {
+  id: number;
+  span_type: string;
+  start_offset: number;
+  end_offset: number;
+  text_content: string;
+  pii_category: string;
+  is_manual: boolean;
+}
+
+export async function createManualSpan(
+  documentId: number,
+  request: ManualSpanCreate
+): Promise<ManualSpanResponse> {
+  const response = await fetch(`${API_BASE}/documents/${documentId}/spans`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to create span' }));
+    throw new Error(error.detail || 'Failed to create span');
+  }
+  return response.json();
+}
+
+export async function updateSpanCategory(
+  documentId: number,
+  spanType: 'detector' | 'risk_flag',
+  spanId: number,
+  piiCategory: string
+): Promise<{ success: boolean }> {
+  const response = await fetch(
+    `${API_BASE}/documents/${documentId}/spans/${spanType}/${spanId}`,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pii_category: piiCategory }),
+    }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to update span' }));
+    throw new Error(error.detail || 'Failed to update span');
+  }
+  return response.json();
+}
+
+export async function deleteSpan(
+  documentId: number,
+  spanType: 'detector' | 'risk_flag',
+  spanId: number
+): Promise<{ success: boolean }> {
+  const response = await fetch(
+    `${API_BASE}/documents/${documentId}/spans/${spanType}/${spanId}`,
+    { method: 'DELETE' }
+  );
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'Failed to delete span' }));
+    throw new Error(error.detail || 'Failed to delete span');
   }
   return response.json();
 }
