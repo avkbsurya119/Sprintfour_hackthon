@@ -1440,3 +1440,125 @@ body {
   background: #fee2e2;
   color: #991b1b;
 }
+
+/* =============================================================================
+   Processing Mode Selector (Sidebar)
+   ============================================================================= */
+
+.mode-selector {
+  background: #F5F4F2;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.mode-selector-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #6B6560;
+  margin-bottom: 8px;
+}
+
+.mode-buttons {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.mode-btn {
+  flex: 1;
+  padding: 8px 12px;
+  background: white;
+  border: 2px solid #D5CEC3;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #4A4540;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.mode-btn:hover {
+  border-color: #00A19B;
+  color: #00A19B;
+}
+
+.mode-btn.active {
+  background: #00A19B;
+  border-color: #00A19B;
+  color: white;
+}
+
+.style-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.style-btn {
+  flex: 1;
+  padding: 6px 10px;
+  background: white;
+  border: 1px solid #D5CEC3;
+  border-radius: 4px;
+  font-size: 12px;
+  color: #6B6560;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.style-btn:hover {
+  border-color: #007A75;
+  color: #007A75;
+}
+
+.style-btn.active {
+  background: #E0F1F0;
+  border-color: #007A75;
+  color: #007A75;
+  font-weight: 500;
+}
+
+/* =============================================================================
+   Card Edit/Delete Actions
+   ============================================================================= */
+
+.card-edit-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed #E4DDD3;
+}
+
+.btn-edit-small,
+.btn-delete-small {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-edit-small {
+  background: white;
+  color: #007A75;
+  border: 1px solid #00A19B;
+}
+
+.btn-edit-small:hover {
+  background: #E0F1F0;
+}
+
+.btn-delete-small {
+  background: white;
+  color: #dc2626;
+  border: 1px solid #fca5a5;
+}
+
+.btn-delete-small:hover {
+  background: #fef2f2;
+  border-color: #dc2626;
+}

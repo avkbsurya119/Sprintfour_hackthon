@@ -46,6 +46,18 @@ const PII_CATEGORIES: { value: PIICategory; label: string }[] = [
   { value: 'money', label: 'Money' },
 ];
 
+// Workflow stages
+type WorkflowStage = 'upload' | 'detecting' | 'review' | 'export';
+
+// Activity log entry for audit trail
+interface ActivityLogEntry {
+  id: number;
+  timestamp: Date;
+  action: string;
+  details?: string;
+  type: 'info' | 'decision' | 'manual' | 'export';
+}
+
 // Text selection state for manual PII marking
 interface TextSelection {
   start: number;
@@ -263,7 +275,7 @@ interface ReviewAppProps {
 
 function ReviewApp({ documentId, onBack }: ReviewAppProps) {
   const DOCUMENT_ID = documentId;
-  const [document, setDocument] = useState<Document | null>(null);
+  const [currentDoc, setCurrentDoc] = useState<Document | null>(null);
   const [detectorSpans, setDetectorSpans] = useState<DetectorSpan[]>([]);
   const [riskFlags, setRiskFlags] = useState<RiskFlag[]>([]);
   const [loading, setLoading] = useState(true);
@@ -275,6 +287,8 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
   const [decisionHistory, setDecisionHistory] = useState<DecisionHistoryEntry[]>([]);
   const [textSelection, setTextSelection] = useState<TextSelection | null>(null);
   const [editingSpan, setEditingSpan] = useState<{ type: 'detector' | 'risk_flag'; id: number } | null>(null);
+  const [selectedMode, setSelectedMode] = useState<SanitizationMode>('redact');
+  const [selectedStyle, setSelectedStyle] = useState<RedactionStyle>('bars');
 
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const documentTextRef = useRef<HTMLDivElement>(null);
@@ -287,7 +301,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           fetchDocument(DOCUMENT_ID),
           fetchReviewItems(DOCUMENT_ID),
         ]);
-        setDocument(doc);
+        setCurrentDoc(doc);
         setDetectorSpans(items.detector_spans);
         setRiskFlags(items.risk_flags);
       } catch (err) {
@@ -579,8 +593,10 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         setTextSelection(null);
       }
     };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
+    if (typeof window !== 'undefined' && window.document) {
+      window.document.addEventListener('mousedown', handleClickOutside);
+      return () => window.document.removeEventListener('mousedown', handleClickOutside);
+    }
   }, []);
 
   // Progress calculations
@@ -594,7 +610,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
 
   if (loading) return <div className="loading">Loading document...</div>;
   if (error) return <div className="error">Error: {error}</div>;
-  if (!document) return <div className="error">Document not found</div>;
+  if (!currentDoc) return <div className="error">Document not found</div>;
 
   return (
     <div className="app">
@@ -605,12 +621,12 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           </button>
           <h1>Conseal Review</h1>
         </div>
-        <span className="header-status">{document.title}</span>
+        <span className="header-status">{currentDoc.title}</span>
       </header>
 
       <main className="main-content">
         <DocumentViewer
-          content={document.content}
+          content={currentDoc.content}
           detectorSpans={detectorSpans}
           riskFlags={riskFlags}
           onSpanClick={handleSpanClick}
@@ -658,6 +674,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
                       isFocused={focusedItemId === `risk-${flag.id}`}
                       isSubmitting={submitting.has(`risk-${flag.id}`)}
                       onAction={handleRiskFlagAction}
+                      onDelete={(id) => handleDeleteSpan('risk_flag', id)}
                       ref={(el) => {
                         if (el) cardRefs.current.set(`risk-${flag.id}`, el);
                       }}
@@ -681,6 +698,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
                       isFocused={focusedItemId === `risk-${flag.id}`}
                       isSubmitting={submitting.has(`risk-${flag.id}`)}
                       onAction={handleRiskFlagAction}
+                      onDelete={(id) => handleDeleteSpan('risk_flag', id)}
                       ref={(el) => {
                         if (el) cardRefs.current.set(`risk-${flag.id}`, el);
                       }}
@@ -712,6 +730,7 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
                   isFocused={focusedItemId === `detector-${span.id}`}
                   isSubmitting={submitting.has(`detector-${span.id}`)}
                   onDecision={handleDetectorDecision}
+                  onDelete={(id) => handleDeleteSpan('detector', id)}
                   ref={(el) => {
                     if (el) cardRefs.current.set(`detector-${span.id}`, el);
                   }}
@@ -721,6 +740,43 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
           </div>
 
           <div className="sidebar-footer">
+            {/* Processing Mode Selector */}
+            <div className="mode-selector">
+              <div className="mode-selector-label">Output Mode:</div>
+              <div className="mode-buttons">
+                <button
+                  className={`mode-btn ${selectedMode === 'redact' ? 'active' : ''}`}
+                  onClick={() => setSelectedMode('redact')}
+                  title="Replace PII with black bars or [REDACTED]"
+                >
+                  Redact
+                </button>
+                <button
+                  className={`mode-btn ${selectedMode === 'pseudonymize' ? 'active' : ''}`}
+                  onClick={() => setSelectedMode('pseudonymize')}
+                  title="Replace PII with consistent labels (PERSON_1, EMAIL_1)"
+                >
+                  Pseudonymize
+                </button>
+              </div>
+              {selectedMode === 'redact' && (
+                <div className="style-buttons">
+                  <button
+                    className={`style-btn ${selectedStyle === 'bars' ? 'active' : ''}`}
+                    onClick={() => setSelectedStyle('bars')}
+                  >
+                    ████
+                  </button>
+                  <button
+                    className={`style-btn ${selectedStyle === 'brackets' ? 'active' : ''}`}
+                    onClick={() => setSelectedStyle('brackets')}
+                  >
+                    [REDACTED]
+                  </button>
+                </div>
+              )}
+            </div>
+
             {decisionHistory.length > 0 && (
               <button className="btn-undo" onClick={handleUndo}>
                 Undo Last Decision
@@ -737,7 +793,15 @@ function ReviewApp({ documentId, onBack }: ReviewAppProps) {
         </aside>
       </main>
 
-      {summary && <CompletionSummary summary={summary} documentId={DOCUMENT_ID} onBack={onBack} />}
+      {summary && (
+        <CompletionSummary
+          summary={summary}
+          documentId={DOCUMENT_ID}
+          onBack={onBack}
+          initialMode={selectedMode}
+          initialStyle={selectedStyle}
+        />
+      )}
     </div>
   );
 }
@@ -952,14 +1016,17 @@ interface DetectorSpanCardProps {
   isFocused: boolean;
   isSubmitting: boolean;
   onDecision: (spanId: number, decision: 'approve' | 'reject') => void;
+  onDelete?: (spanId: number) => void;
+  onEditCategory?: (spanId: number) => void;
 }
 
 const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>(
-  ({ span, linkedCount, isFocused, isSubmitting, onDecision }, ref) => {
+  ({ span, linkedCount, isFocused, isSubmitting, onDecision, onDelete, onEditCategory }, ref) => {
     const decided = !!span.decision;
     const category = getCategoryLabel(span);
     const isLinked = linkedCount > 1;
     const confidence = span.confidence_score;
+    const isManual = span.is_manual;
 
     return (
       <div
@@ -1029,6 +1096,31 @@ const DetectorSpanCard = React.forwardRef<HTMLDivElement, DetectorSpanCardProps>
                 Applies to {linkedCount} occurrences in document
               </div>
             )}
+
+            {/* Edit/Delete actions for manual spans */}
+            {(isManual || onDelete) && (
+              <div className="card-edit-actions">
+                {onEditCategory && (
+                  <button
+                    className="btn-edit-small"
+                    onClick={() => onEditCategory(span.id)}
+                    title="Change PII category"
+                  >
+                    Edit Type
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    className="btn-delete-small"
+                    onClick={() => onDelete(span.id)}
+                    title="Remove this detection"
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            )}
+
             <div className="card-actions">
               <button
                 className="btn btn-approve"
@@ -1060,12 +1152,14 @@ interface RiskFlagCardProps {
   isFocused: boolean;
   isSubmitting: boolean;
   onAction: (flagId: number, action: 'redact' | 'stage' | 'confirm-dismiss') => void;
+  onDelete?: (flagId: number) => void;
 }
 
 const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
-  ({ flag, urgency, isStaged, isFocused, isSubmitting, onAction }, ref) => {
+  ({ flag, urgency, isStaged, isFocused, isSubmitting, onAction, onDelete }, ref) => {
     const decided = !!flag.decision;
     const confidence = flag.confidence_score;
+    const isManual = flag.is_manual;
 
     return (
       <div
@@ -1127,6 +1221,19 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
 
             <div className="card-content">{flag.text_content}</div>
 
+            {/* Delete action for manual flags */}
+            {(isManual || onDelete) && onDelete && (
+              <div className="card-edit-actions">
+                <button
+                  className="btn-delete-small"
+                  onClick={() => onDelete(flag.id)}
+                  title="Remove this detection"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+
             {isStaged && (
               <div className="staged-warning">
                 Click again to confirm dismissal
@@ -1169,11 +1276,13 @@ const RiskFlagCard = React.forwardRef<HTMLDivElement, RiskFlagCardProps>(
 // Sanitization Panel Component
 interface SanitizationPanelProps {
   documentId: number;
+  initialMode?: SanitizationMode;
+  initialStyle?: RedactionStyle;
 }
 
-function SanitizationPanel({ documentId }: SanitizationPanelProps) {
-  const [mode, setMode] = useState<SanitizationMode>('redact');
-  const [redactionStyle, setRedactionStyle] = useState<RedactionStyle>('bars');
+function SanitizationPanel({ documentId, initialMode = 'redact', initialStyle = 'bars' }: SanitizationPanelProps) {
+  const [mode, setMode] = useState<SanitizationMode>(initialMode);
+  const [redactionStyle, setRedactionStyle] = useState<RedactionStyle>(initialStyle);
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<SanitizeResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1348,9 +1457,11 @@ interface CompletionSummaryProps {
   summary: Summary;
   documentId: number;
   onBack: () => void;
+  initialMode?: SanitizationMode;
+  initialStyle?: RedactionStyle;
 }
 
-function CompletionSummary({ summary, documentId, onBack }: CompletionSummaryProps) {
+function CompletionSummary({ summary, documentId, onBack, initialMode, initialStyle }: CompletionSummaryProps) {
   const handleRestart = () => {
     window.location.reload();
   };
@@ -1383,7 +1494,11 @@ function CompletionSummary({ summary, documentId, onBack }: CompletionSummaryPro
             : `${summary.exposures_missed} potential PII exposure${summary.exposures_missed > 1 ? 's were' : ' was'} left unaddressed.`}
         </div>
 
-        <SanitizationPanel documentId={documentId} />
+        <SanitizationPanel
+          documentId={documentId}
+          initialMode={initialMode}
+          initialStyle={initialStyle}
+        />
 
         <div className="summary-actions">
           <button className="btn-restart" onClick={handleRestart}>
