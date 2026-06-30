@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, ForeignKey, JSON
 from sqlalchemy.sql import func
 from app.database import Base
 
@@ -34,6 +34,9 @@ class DetectorSpan(Base):
     start_offset = Column(Integer, nullable=False)
     end_offset = Column(Integer, nullable=False)
     text_content = Column(Text, nullable=False)
+    ensemble_sources = Column(JSON, nullable=True)
+    ensemble_agreement_count = Column(Integer, nullable=True)
+    ensemble_conflict_types = Column(JSON, nullable=True)
 
 
 class RiskFlag(Base):
@@ -47,6 +50,9 @@ class RiskFlag(Base):
     text_content = Column(Text, nullable=False)
     pii_category = Column(String(50), nullable=False)
     pattern_source = Column(String(50), nullable=False)
+    ensemble_sources = Column(JSON, nullable=True)
+    ensemble_agreement_count = Column(Integer, nullable=True)
+    ensemble_conflict_types = Column(JSON, nullable=True)
 
 
 class UserDecision(Base):

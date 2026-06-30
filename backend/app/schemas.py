@@ -20,6 +20,9 @@ class DetectorSpanResponse(BaseModel):
     end_offset: int
     text_content: str
     decision: Optional[str] = None
+    ensemble_sources: Optional[List[str]] = None
+    ensemble_agreement_count: Optional[int] = None
+    ensemble_conflict_types: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
@@ -33,6 +36,9 @@ class RiskFlagResponse(BaseModel):
     pii_category: str
     pattern_source: str
     decision: Optional[str] = None
+    ensemble_sources: Optional[List[str]] = None
+    ensemble_agreement_count: Optional[int] = None
+    ensemble_conflict_types: Optional[List[str]] = None
 
     class Config:
         from_attributes = True
@@ -67,3 +73,23 @@ class SummaryResponse(BaseModel):
     correct_redactions_kept: int       # detector TPs that Sam approved
     total_reviewed: int
     document_status: str
+
+
+class UploadResponse(BaseModel):
+    document_id: int
+    title: str
+    detector_span_count: int
+    risk_flag_count: int
+    file_type: str  # 'pdf' | 'docx'
+    char_count: int
+
+
+class DocumentListItem(BaseModel):
+    id: int
+    title: str
+    status: str
+    created_at: datetime
+    is_demo: bool  # True for the seeded demo document (id == 1)
+
+    class Config:
+        from_attributes = True
