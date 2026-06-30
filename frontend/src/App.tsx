@@ -5,6 +5,7 @@ import {
   fetchReviewItems,
   submitDecision,
   completeReview,
+  deleteDecision,
 } from './api';
 import type {
   Document,
@@ -22,6 +23,14 @@ function getUrgency(flag: RiskFlag): 'critical' | 'elevated' {
     : 'elevated';
 }
 
+// Track decision history for undo
+interface DecisionHistoryEntry {
+  decisionId: number;
+  spanType: 'detector' | 'risk_flag';
+  spanId: number;
+  decision: string;
+}
+
 function App() {
   const [document, setDocument] = useState<Document | null>(null);
   const [detectorSpans, setDetectorSpans] = useState<DetectorSpan[]>([]);
@@ -32,6 +41,7 @@ function App() {
   const [stagedDismissals, setStagedDismissals] = useState<Set<number>>(new Set());
   const [summary, setSummary] = useState<Summary | null>(null);
   const [submitting, setSubmitting] = useState<Set<string>>(new Set());
+  const [decisionHistory, setDecisionHistory] = useState<DecisionHistoryEntry[]>([]);
 
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
@@ -63,10 +73,16 @@ function App() {
 
       setSubmitting((s) => new Set(s).add(key));
       try {
-        await submitDecision(DOCUMENT_ID, 'detector', spanId, decision);
+        const result = await submitDecision(DOCUMENT_ID, 'detector', spanId, decision);
         setDetectorSpans((spans) =>
           spans.map((s) => (s.id === spanId ? { ...s, decision } : s))
         );
+        setDecisionHistory((h) => [...h, {
+          decisionId: result.id,
+          spanType: 'detector',
+          spanId,
+          decision,
+        }]);
       } finally {
         setSubmitting((s) => {
           const next = new Set(s);
@@ -92,7 +108,7 @@ function App() {
 
       setSubmitting((s) => new Set(s).add(key));
       try {
-        await submitDecision(DOCUMENT_ID, 'risk_flag', flagId, decision);
+        const result = await submitDecision(DOCUMENT_ID, 'risk_flag', flagId, decision);
         setRiskFlags((flags) =>
           flags.map((f) => (f.id === flagId ? { ...f, decision } : f))
         );
@@ -101,6 +117,12 @@ function App() {
           next.delete(flagId);
           return next;
         });
+        setDecisionHistory((h) => [...h, {
+          decisionId: result.id,
+          spanType: 'risk_flag',
+          spanId: flagId,
+          decision,
+        }]);
       } finally {
         setSubmitting((s) => {
           const next = new Set(s);
@@ -120,6 +142,35 @@ function App() {
       alert(err instanceof Error ? err.message : 'Failed to complete');
     }
   }, []);
+
+  const handleUndo = useCallback(async () => {
+    if (decisionHistory.length === 0) return;
+
+    const lastDecision = decisionHistory[decisionHistory.length - 1];
+    try {
+      await deleteDecision(DOCUMENT_ID, lastDecision.decisionId);
+
+      // Revert UI state
+      if (lastDecision.spanType === 'detector') {
+        setDetectorSpans((spans) =>
+          spans.map((s) =>
+            s.id === lastDecision.spanId ? { ...s, decision: null } : s
+          )
+        );
+      } else {
+        setRiskFlags((flags) =>
+          flags.map((f) =>
+            f.id === lastDecision.spanId ? { ...f, decision: null } : f
+          )
+        );
+      }
+
+      // Remove from history
+      setDecisionHistory((h) => h.slice(0, -1));
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Failed to undo');
+    }
+  }, [decisionHistory]);
 
   const handleSpanClick = useCallback((itemId: string) => {
     setFocusedItemId(itemId);
@@ -239,6 +290,11 @@ function App() {
           </div>
 
           <div className="sidebar-footer">
+            {decisionHistory.length > 0 && (
+              <button className="btn-undo" onClick={handleUndo}>
+                Undo Last Decision
+              </button>
+            )}
             <button
               className="btn-complete"
               disabled={!allDecided}

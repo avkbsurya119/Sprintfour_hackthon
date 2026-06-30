@@ -428,10 +428,29 @@ body {
   gap: 6px;
 }
 
-/* Complete button */
+/* Sidebar footer with undo */
 .sidebar-footer {
   padding: 16px;
   border-top: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-undo {
+  width: 100%;
+  padding: 10px;
+  background: white;
+  color: #6b7280;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-undo:hover {
+  background: #f9fafb;
 }
 
 .btn-complete {
